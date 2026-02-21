@@ -31,6 +31,7 @@ kubectl get nodes
 
 # Copy the node token to shared folder for worker to access
 echo "=== Copying Node Token for Worker ==="
+mkdir -p /vagrant/confs
 cp /var/lib/rancher/k3s/server/node-token /vagrant/confs/node-token
 cat /vagrant/confs/node-token
 
