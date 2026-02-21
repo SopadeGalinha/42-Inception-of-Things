@@ -1,3 +1,15 @@
+# Inception-of-Things (IoT)
+
+A System Administration project focused on Kubernetes, using K3s and K3d with Vagrant.
+
+## Table of Contents
+
+- [Part 1: K3s and Vagrant](#part-1-k3s-and-vagrant)
+- [Part 2: K3s and Three Simple Applications](#part-2-k3s-and-three-simple-applications)
+- [Part 3: K3d and Argo CD](#part-3-k3d-and-argo-cd) *(coming soon)*
+
+---
+
 # Part 1: K3s and Vagrant
 
 This part sets up a K3s cluster with two virtual machines using Vagrant: one **Server** (controller) and one **Worker** (agent).
@@ -216,3 +228,314 @@ The `private_network` in Vagrant creates a host-only network that allows:
 
 ### Synced Folders
 Vagrant automatically syncs the project folder (`p1/`) to `/vagrant/` inside each VM. This is used to share the node-token between server and worker.
+
+---
+
+# Part 2: K3s and Three Simple Applications
+
+This part demonstrates **Ingress routing** in Kubernetes by deploying three web applications on a single K3s server, accessible via different hostnames.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  Client Request                                                     │
+│  curl -H 'Host: app2.com' http://192.168.56.110                     │
+│                                                                     │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼ port 80
+┌─────────────────────────────────────────────────────────────────────┐
+│  VM jhogoncaS (192.168.56.110)                                      │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  TRAEFIK (Ingress Controller)                                 │  │
+│  │                                                               │  │
+│  │  Routing Rules:                                               │  │
+│  │  ┌─────────────────────────────────────────────────────────┐  │  │
+│  │  │  Host: app1.com  →  app1-service:5678  (1 replica)      │  │  │
+│  │  │  Host: app2.com  →  app2-service:5678  (3 replicas)     │  │  │
+│  │  │  Default         →  app3-service:5678  (1 replica)      │  │  │
+│  │  └─────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│         │                    │                    │                 │
+│         ▼                    ▼                    ▼                 │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐            │
+│  │   Service   │     │   Service   │     │   Service   │            │
+│  │ app1-service│     │ app2-service│     │ app3-service│            │
+│  └──────┬──────┘     └──────┬──────┘     └──────┬──────┘            │
+│         │                   │                   │                   │
+│         ▼                   ▼                   ▼                   │
+│    ┌────────┐    ┌────────┬────────┬────────┐  ┌────────┐           │
+│    │  Pod   │    │  Pod   │  Pod   │  Pod   │  │  Pod   │           │
+│    │  app1  │    │  app2  │  app2  │  app2  │  │  app3  │           │
+│    └────────┘    └────────┴────────┴────────┘  └────────┘           │
+│                        (3 replicas)                                 │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## File Structure
+
+```
+p2/
+├── Vagrantfile              # Single VM configuration
+├── confs/
+│   ├── app1.yaml            # Deployment + Service for app1
+│   ├── app2.yaml            # Deployment + Service for app2 (3 replicas)
+│   ├── app3.yaml            # Deployment + Service for app3 (default)
+│   └── ingress.yaml         # Ingress routing rules
+└── scripts/
+    └── setup.sh             # K3s installation + app deployment
+```
+
+## How It Works
+
+### The Request Flow
+
+When you make a request to the VM, here's what happens:
+
+```
+1. HTTP Request arrives at VM (192.168.56.110:80)
+   Header: "Host: app2.com"
+              │
+              ▼
+2. Traefik (Ingress Controller) receives the request
+   - Reads the "Host" header
+   - Looks up matching Ingress rules
+              │
+              ▼
+3. Ingress Rule matched: app2.com → app2-service:5678
+              │
+              ▼
+4. Service (app2-service) receives the request
+   - Looks up pods with label "app=app2"
+   - Load balances across 3 pods
+              │
+              ▼
+5. Pod responds: "Hello from app2!"
+```
+
+### Kubernetes Components Explained
+
+#### 1. Deployment (app2.yaml)
+
+A Deployment ensures a specified number of pod replicas are running at all times.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app2
+spec:
+  replicas: 3                    # ◄── Maintain 3 pods
+  selector:
+    matchLabels:
+      app: app2                  # ◄── Manage pods with this label
+  template:
+    metadata:
+      labels:
+        app: app2                # ◄── Label applied to created pods
+    spec:
+      containers:
+      - name: app2
+        image: hashicorp/http-echo
+        args: ["-text=Hello from app2!", "-listen=:5678"]
+```
+
+**Self-healing**: If a pod crashes, the Deployment automatically creates a new one to maintain 3 replicas.
+
+#### 2. Service (app2.yaml)
+
+A Service provides a stable IP address and DNS name for accessing pods. Pods are ephemeral and their IPs change - Services solve this problem.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: app2-service
+spec:
+  selector:
+    app: app2                    # ◄── Route traffic to pods with this label
+  ports:
+  - port: 5678
+    targetPort: 5678
+```
+
+**How it finds pods**: The Service watches for pods with the label `app=app2` and automatically updates its endpoint list when pods are created or destroyed.
+
+#### 3. Ingress (ingress.yaml)
+
+Ingress exposes HTTP routes from outside the cluster to Services inside the cluster.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+spec:
+  rules:
+  - host: app1.com               # ◄── If Host header = app1.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app1-service   # ◄── Route to this service
+            port:
+              number: 5678
+  - host: app2.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app2-service
+            port:
+              number: 5678
+  - http:                        # ◄── No host = default route
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app3-service
+            port:
+              number: 5678
+```
+
+### Labels & Selectors: The Glue
+
+Kubernetes components discover each other through **labels** (key-value pairs) and **selectors** (queries).
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│  Deployment                        Pods                          │
+│  ┌─────────────────────┐          ┌──────────────────┐           │
+│  │ selector:           │          │ labels:          │           │
+│  │   app: app2    ─────┼─────────►│   app: app2      │ MATCH     │
+│  └─────────────────────┘          └──────────────────┘           │
+│                                   ┌──────────────────┐           │
+│                       ───────────►│   app: app1      │ NO MATCH  │
+│                                   └──────────────────┘           │
+│                                                                  │
+│   Service                                                        │
+│  ┌─────────────────────┐                                         │
+│  │ selector:           │                                         │
+│  │   app: app2    ─────┼────────────────────────────► Same pods! │
+│  └─────────────────────┘                                         │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Ingress vs DNS
+
+| | DNS | Ingress |
+|--|-----|---------|
+| **What it does** | Resolves domain → IP | Routes by Host header → Service |
+| **Where** | Internet/Network | Inside Kubernetes cluster |
+| **Example** | `app1.com → 93.184.216.34` | `Host: app1.com → app1-service` |
+
+Since we don't have real DNS, we simulate the `Host` header with `curl -H 'Host: app1.com'`.
+
+## Usage
+
+### Start the VM
+```bash
+cd p2
+vagrant up
+```
+
+### SSH and verify
+```bash
+vagrant ssh jhogoncaS
+
+# Check all components
+kubectl get nodes
+kubectl get deployments
+kubectl get pods
+kubectl get services
+kubectl get ingress
+```
+
+### Test the routing
+```bash
+# Inside the VM:
+
+# Test app1 (Host: app1.com)
+curl -H 'Host: app1.com' http://192.168.56.110
+# → Hello from app1!
+
+# Test app2 (Host: app2.com)
+curl -H 'Host: app2.com' http://192.168.56.110
+# → Hello from app2!
+
+# Test default (no specific host)
+curl http://192.168.56.110
+# → Hello from app3 (default)!
+
+# Test unknown host (falls back to default)
+curl -H 'Host: unknown.com' http://192.168.56.110
+# → Hello from app3 (default)!
+```
+
+### Verify app2 has 3 replicas
+```bash
+kubectl get pods -l app=app2
+```
+
+Expected output:
+```
+NAME                    READY   STATUS    RESTARTS   AGE
+app2-xxxxxxxxx-xxxxx   1/1     Running   0          5m
+app2-xxxxxxxxx-yyyyy   1/1     Running   0          5m
+app2-xxxxxxxxx-zzzzz   1/1     Running   0          5m
+```
+
+### Test self-healing
+```bash
+# Delete a pod and watch it recreate
+kubectl delete pod -l app=app2 --wait=false
+kubectl get pods -l app=app2 -w
+```
+
+### Useful debugging commands
+```bash
+# View pod logs
+kubectl logs -l app=app1
+
+# Describe a service (shows endpoints)
+kubectl describe service app2-service
+
+# View Ingress details
+kubectl describe ingress app-ingress
+
+# Check Traefik logs
+kubectl logs -n kube-system -l app.kubernetes.io/name=traefik
+```
+
+### Stop/Destroy
+```bash
+vagrant halt      # Stop VM
+vagrant destroy -f  # Delete VM
+```
+
+## Key Concepts
+
+### Ingress Controller (Traefik)
+K3s comes with **Traefik** pre-installed as the Ingress Controller. It watches for Ingress resources and automatically configures routing rules. When you create an Ingress YAML, Traefik picks it up and starts routing traffic accordingly.
+
+### Why ClusterIP Services?
+Our Services use the default type `ClusterIP`, which means they're only accessible inside the cluster. The **Ingress** is what exposes them externally on port 80. This pattern allows multiple services to share a single entry point.
+
+### Pod Replicas and Load Balancing
+With `replicas: 3` for app2, the Service automatically load-balances requests across all 3 pods using round-robin. If you make multiple requests to `app2.com`, they'll be distributed across different pods.
+
+---
+
+# Part 3: K3d and Argo CD
+
+*Coming soon...*
