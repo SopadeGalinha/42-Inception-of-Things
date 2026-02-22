@@ -1,0 +1,88 @@
+#===============================================================================
+# wil42/playground Application Deployment
+#===============================================================================
+# This file defines all Kubernetes resources for the wil42/playground app:
+# - Deployment: Runs the container with specified replicas
+# - Service: Exposes the app internally within the cluster
+#
+# GitOps Flow:
+# 1. This file is stored in GitHub
+# 2. Argo CD watches for changes
+# 3. When you change the image tag (v1 → v2), Argo CD deploys the update
+#
+# To demonstrate CI/CD:
+# 1. Start with image: wil42/playground:v1
+# 2. Commit and push with image: wil42/playground:v2
+# 3. Watch Argo CD automatically update the deployment
+#===============================================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wil42-playground
+  namespace: dev
+  labels:
+    app: wil42-playground
+spec:
+  # Number of pod replicas to run
+  replicas: 1
+  
+  # Selector must match the pod template labels
+  selector:
+    matchLabels:
+      app: wil42-playground
+  
+  # Pod template
+  template:
+    metadata:
+      labels:
+        app: wil42-playground
+    spec:
+      containers:
+        - name: playground
+          #-----------------------------------------------------------------
+          # IMAGE VERSION
+          #-----------------------------------------------------------------
+          # Change this to demonstrate GitOps CI/CD:
+          # v1 → v2: Edit, commit, push, watch Argo CD update!
+          #
+          # The wil42/playground image:
+          # - v1: Shows "Hello, this is version 1"
+          # - v2: Shows "Hello, this is version 2"
+          #-----------------------------------------------------------------
+          image: wil42/playground:v1
+          
+          # Container port (the app listens on 8888)
+          ports:
+            - containerPort: 8888
+          
+          # Resource limits (good practice)
+          resources:
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wil42-playground-service
+  namespace: dev
+  labels:
+    app: wil42-playground
+spec:
+  # ClusterIP for internal access
+  # The Ingress (or port-forward) will expose it externally
+  type: ClusterIP
+  
+  # Select pods with matching labels
+  selector:
+    app: wil42-playground
+  
+  ports:
+    - name: http
+      port: 8888
+      targetPort: 8888
+      protocol: TCP

@@ -1,0 +1,58 @@
+#===============================================================================
+# Argo CD Application Definition
+#===============================================================================
+# This resource tells Argo CD to:
+# 1. Watch a Git repository for changes
+# 2. Deploy the manifests found at the specified path
+# 3. Keep the cluster state synchronized with Git (GitOps)
+#
+# Flow:
+# GitHub Repo (p3/confs/app/) ──sync──> Argo CD ──deploy──> Kubernetes (dev namespace)
+#===============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # Name of the Argo CD Application resource
+  name: wil42-playground
+  # Must be in the argocd namespace where Argo CD is installed
+  namespace: argocd
+spec:
+  # Project defines which repositories and clusters this app can access
+  # 'default' is the built-in project that allows access to everything
+  project: default
+
+  #-----------------------------------------------------------------------------
+  # Source: Where to get the manifests
+  #-----------------------------------------------------------------------------
+  source:
+    # GitHub repository URL (must be public, or configure credentials for private)
+    repoURL: https://github.com/SopadeGalinha/42-Inception-of-Things.git
+    # Which branch/tag/commit to track
+    # HEAD means the latest commit on the default branch
+    targetRevision: HEAD
+    # Path inside the repo where Kubernetes manifests are located
+    path: p3/confs/app
+
+  #-----------------------------------------------------------------------------
+  # Destination: Where to deploy
+  #-----------------------------------------------------------------------------
+  destination:
+    # Kubernetes API server URL
+    # 'kubernetes.default.svc' means the same cluster where Argo CD runs
+    server: https://kubernetes.default.svc
+    # Namespace where the application will be deployed
+    namespace: dev
+
+  #-----------------------------------------------------------------------------
+  # Sync Policy: How to keep things synchronized
+  #-----------------------------------------------------------------------------
+  syncPolicy:
+    # Automated sync means Argo CD will automatically apply changes
+    automated:
+      # prune: Delete resources that are no longer in Git
+      prune: true
+      # selfHeal: Revert manual changes to match Git
+      selfHeal: true
+    syncOptions:
+      # Create the namespace if it doesn't exist
+      - CreateNamespace=true

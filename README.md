@@ -538,4 +538,405 @@ With `replicas: 3` for app2, the Service automatically load-balances requests ac
 
 # Part 3: K3d and Argo CD
 
-*Coming soon...*
+This part sets up a complete GitOps pipeline using **K3d** (Kubernetes in Docker) and **Argo CD** (GitOps continuous delivery tool). Instead of VMs, we run Kubernetes directly in Docker containers.
+
+## What is K3d?
+
+**K3d** is a lightweight wrapper to run **K3s** (lightweight Kubernetes) in Docker. It creates Kubernetes clusters as Docker containers, which is:
+- **Fast**: Seconds to create a cluster (vs minutes for VMs)
+- **Lightweight**: No VM overhead, just containers
+- **Portable**: Works anywhere Docker runs (Linux, macOS, Windows WSL2)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Host Machine (WSL2)                        │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    Docker                                │    │
+│  │                                                          │    │
+│  │   ┌─────────────────┐    ┌─────────────────┐            │    │
+│  │   │   K3d Server    │    │   K3d LB        │            │    │
+│  │   │   (K3s in       │    │   (Traefik)     │            │    │
+│  │   │    Docker)      │◄───│   Port: 8080    │◄───────────│────│── External
+│  │   │                 │    │                 │            │    │   Access
+│  │   └─────────────────┘    └─────────────────┘            │    │
+│  │                                                          │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## What is Argo CD?
+
+**Argo CD** is a GitOps continuous delivery tool for Kubernetes. It follows the **GitOps** principle:
+
+> **Git is the single source of truth**
+
+Instead of manually running `kubectl apply`, Argo CD:
+1. Watches a Git repository for changes
+2. Compares the desired state (Git) with the actual state (cluster)
+3. Automatically synchronizes differences
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                           GitOps Flow                                │
+│                                                                      │
+│   ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐   │
+│   │  GitHub  │────>│  Argo CD │────>│   K8s    │────>│   App    │   │
+│   │   Repo   │     │  (watch) │     │ Cluster  │     │ Running  │   │
+│   └──────────┘     └──────────┘     └──────────┘     └──────────┘   │
+│        │                ^                                 │          │
+│        │                │                                 │          │
+│        │         Compare & Sync                           │          │
+│        │                │                                 │          │
+│        └────────────────┴─────────────────────────────────┘          │
+│                                                                      │
+│   Developer pushes ──> Argo CD detects ──> Auto deploys to cluster   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+## Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                           Part 3 Architecture                              │
+│                                                                            │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                        K3d Cluster                                  │  │
+│   │                                                                     │  │
+│   │   ┌─────────────────────────────────────┐                           │  │
+│   │   │          argocd namespace           │                           │  │
+│   │   │                                     │                           │  │
+│   │   │   ┌─────────────────────────────┐   │                           │  │
+│   │   │   │        Argo CD              │   │                           │  │
+│   │   │   │  - argocd-server (UI/API)   │   │                           │  │
+│   │   │   │  - argocd-repo-server       │   │    Watches & Syncs        │  │
+│   │   │   │  - argocd-application-ctrl  │───│──────────────────────┐    │  │
+│   │   │   │  - argocd-redis             │   │                      │    │  │
+│   │   │   │  - argocd-dex-server        │   │                      │    │  │
+│   │   │   └─────────────────────────────┘   │                      │    │  │
+│   │   │                                     │                      │    │  │
+│   │   └─────────────────────────────────────┘                      │    │  │
+│   │                                                                 │    │  │
+│   │   ┌─────────────────────────────────────┐                      │    │  │
+│   │   │            dev namespace            │                      │    │  │
+│   │   │                                     │                      │    │  │
+│   │   │   ┌─────────────────────────────┐   │                      │    │  │
+│   │   │   │    wil42/playground:v1      │<──│──────────────────────┘    │  │
+│   │   │   │    (or v2 after update)     │   │    Deploys from Git       │  │
+│   │   │   └─────────────────────────────┘   │                           │  │
+│   │   │                                     │                           │  │
+│   │   └─────────────────────────────────────┘                           │  │
+│   │                                                                     │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│                                    │                                       │
+│                                    │ Syncs from                            │
+│                                    ▼                                       │
+│   ┌──────────────────────────────────────────────────────────────────┐    │
+│   │                         GitHub Repository                         │    │
+│   │              github.com/SopadeGalinha/42-Inception-of-Things      │    │
+│   │                                                                   │    │
+│   │    p3/confs/app/deployment.yaml  ←─── Source of truth for app    │    │
+│   │                                                                   │    │
+│   └──────────────────────────────────────────────────────────────────┘    │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+## File Structure
+
+```
+p3/
+├── scripts/
+│   └── setup.sh              # Main setup script (installs everything)
+└── confs/
+    ├── argocd-app.yaml       # Argo CD Application resource
+    └── app/
+        └── deployment.yaml   # wil42/playground app (synced by Argo CD)
+```
+
+## Prerequisites
+
+Before running Part 3, ensure you have:
+
+| Tool | Installation |
+|------|-------------|
+| Docker | Must be running |
+| K3d | `curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \| bash` |
+| kubectl | Usually bundled with K3d, or install separately |
+
+## Setup Script Explained
+
+The `setup.sh` script performs these steps:
+
+### Step 1: Verify Prerequisites
+```bash
+docker info          # Check Docker is running
+k3d version          # Check K3d is installed
+```
+
+### Step 2: Create K3d Cluster
+```bash
+k3d cluster create iot \
+    --api-port 6550 \              # Kubernetes API on port 6550
+    --port "8080:80@loadbalancer" \ # Expose port 80 as 8080 on host
+    --agents 0 \                   # No agent nodes (just server)
+    --wait                         # Wait for cluster ready
+```
+
+### Step 3: Create Namespaces
+```bash
+kubectl create namespace argocd   # For Argo CD installation
+kubectl create namespace dev      # For our application
+```
+
+### Step 4: Install Argo CD
+```bash
+kubectl apply -n argocd \
+    -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+This installs the following Argo CD components:
+
+| Component | Purpose |
+|-----------|---------|
+| `argocd-server` | API server and Web UI |
+| `argocd-repo-server` | Clones and caches Git repos |
+| `argocd-application-controller` | Monitors apps and syncs state |
+| `argocd-redis` | Caching layer |
+| `argocd-dex-server` | Authentication (SSO) |
+
+### Step 5: Configure Access
+```bash
+# Change service type from ClusterIP to NodePort for easy access
+kubectl patch svc argocd-server -n argocd \
+    -p '{"spec": {"type": "NodePort"}}'
+
+# Get admin password
+kubectl -n argocd get secret argocd-initial-admin-secret \
+    -o jsonpath="{.data.password}" | base64 -d
+```
+
+### Step 6: Deploy Application via Argo CD
+The script applies the `argocd-app.yaml` which tells Argo CD to:
+- Watch: `github.com/SopadeGalinha/42-Inception-of-Things`
+- Path: `p3/confs/app/`
+- Deploy to: `dev` namespace
+
+## Argo CD Application Resource
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wil42-playground
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/SopadeGalinha/42-Inception-of-Things.git
+    targetRevision: HEAD
+    path: p3/confs/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true      # Delete removed resources
+      selfHeal: true   # Revert manual changes
+```
+
+### Sync Policy Explained
+
+| Setting | Effect |
+|---------|--------|
+| `automated` | Automatically apply changes (no manual sync needed) |
+| `prune: true` | If you remove a resource from Git, it's deleted from cluster |
+| `selfHeal: true` | If someone manually changes the cluster, Argo CD reverts it |
+
+## The Application: wil42/playground
+
+The `wil42/playground` image is a simple web server with two versions:
+
+| Version | Response |
+|---------|----------|
+| `v1` | Shows version 1 message |
+| `v2` | Shows version 2 message |
+
+### deployment.yaml
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wil42-playground
+  namespace: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wil42-playground
+  template:
+    metadata:
+      labels:
+        app: wil42-playground
+    spec:
+      containers:
+        - name: playground
+          image: wil42/playground:v1   # ← Change to v2 to trigger update
+          ports:
+            - containerPort: 8888
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wil42-playground-service
+  namespace: dev
+spec:
+  selector:
+    app: wil42-playground
+  ports:
+    - port: 8888
+      targetPort: 8888
+```
+
+## Usage
+
+### Quick Start
+```bash
+cd p3/scripts
+./setup.sh
+```
+
+### Manual Argo CD Access
+```bash
+# Port-forward to access Argo CD UI
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+
+# Open in browser
+# https://localhost:8080
+# Username: admin
+# Password: (shown by setup script)
+```
+
+### Check Application Status
+```bash
+# View Argo CD applications
+kubectl get applications -n argocd
+
+# View deployed pods
+kubectl get pods -n dev
+
+# View services
+kubectl get svc -n dev
+
+# Check app logs
+kubectl logs -n dev -l app=wil42-playground
+```
+
+### Test the Application
+```bash
+# Port-forward to access the app
+kubectl port-forward svc/wil42-playground-service -n dev 8888:8888
+
+# In another terminal:
+curl http://localhost:8888
+```
+
+## Demonstrating CI/CD (v1 → v2)
+
+This is the key demonstration for Part 3. Follow these steps:
+
+### 1. Verify Current Version
+```bash
+# Check the current image
+kubectl get deployment wil42-playground -n dev \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'
+# Output: wil42/playground:v1
+```
+
+### 2. Update the Git Repository
+Edit `p3/confs/app/deployment.yaml`:
+```yaml
+# Change this line:
+image: wil42/playground:v1
+# To:
+image: wil42/playground:v2
+```
+
+### 3. Commit and Push
+```bash
+git add p3/confs/app/deployment.yaml
+git commit -m "feat(p3): update playground to v2"
+git push
+```
+
+### 4. Watch Argo CD Sync
+```bash
+# Watch the application sync status
+kubectl get applications -n argocd -w
+
+# Or watch pods rolling update
+kubectl get pods -n dev -w
+```
+
+### 5. Verify New Version
+```bash
+kubectl get deployment wil42-playground -n dev \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'
+# Output: wil42/playground:v2
+```
+
+## Argo CD UI Walkthrough
+
+After running `kubectl port-forward svc/argocd-server -n argocd 8080:443`:
+
+1. **Open** https://localhost:8080
+2. **Login** with admin / (password from setup)
+3. **View Application**: Click on `wil42-playground`
+4. **See Resources**: Deployment, Service, ReplicaSet, Pod
+5. **Watch Sync**: After Git push, see "OutOfSync" → "Synced"
+
+## Cleanup
+
+```bash
+# Delete the K3d cluster (removes everything)
+k3d cluster delete iot
+
+# Verify
+k3d cluster list
+docker ps  # Should show no K3d containers
+```
+
+## Key Concepts
+
+### GitOps Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Auditability** | Git history tracks all changes |
+| **Rollback** | `git revert` to restore previous state |
+| **Consistency** | Cluster always matches Git |
+| **Automation** | No manual `kubectl apply` needed |
+| **Security** | Cluster credentials stay in cluster |
+
+### Argo CD vs Traditional CI/CD
+
+| Aspect | Traditional CI/CD | GitOps (Argo CD) |
+|--------|------------------|------------------|
+| Deployment trigger | CI pipeline pushes to cluster | Cluster pulls from Git |
+| Credential storage | CI system has cluster creds | Cluster pulls using pull-based model |
+| State management | Applied changes may drift | Continuous sync prevents drift |
+| Rollback | Re-run old pipeline | `git revert` |
+
+### Why Two Namespaces?
+
+| Namespace | Purpose |
+|-----------|---------|
+| `argocd` | Houses Argo CD itself (operator) |
+| `dev` | Houses the managed application |
+
+This separation follows best practices:
+- Argo CD is infrastructure
+- Applications are workloads
+- Different RBAC rules can apply
