@@ -4,7 +4,7 @@
 # Single VM with K3s server that hosts 3 web applications
 
 Vagrant.configure("2") do |config|
-  config.vm.box = "ubuntu/noble64"
+  config.vm.box = "ubuntu/jammy64"
 
   # SERVER (S) - Only one machine for Part 2
   config.vm.define "jhogoncaS" do |s|

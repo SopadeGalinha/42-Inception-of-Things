@@ -50,9 +50,9 @@ p1/
 
 ### Base Box
 ```ruby
-config.vm.box = "ubuntu/noble64"
+config.vm.box = "ubuntu/jammy64"
 ```
-Uses Ubuntu 24.04 LTS (Noble Numbat), the latest Ubuntu LTS release, as the base operating system.
+Uses Ubuntu 22.04 LTS (Jammy Jellyfish) as the base operating system — the newest release Canonical officially publishes under the `ubuntu/` namespace on Vagrant Cloud (24.04 boxes only exist from third-party publishers like `bento/`).
 
 ### Server Configuration
 ```ruby

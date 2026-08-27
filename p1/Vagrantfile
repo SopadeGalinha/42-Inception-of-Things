@@ -14,7 +14,10 @@
 
 # Configure Vagrant with version 2 API
 Vagrant.configure("2") do |config|
-  config.vm.box = "ubuntu/noble64"
+  config.vm.box = "ubuntu/jammy64"
+  # Nested virtualization adds overhead to boot time, so give SSH more time
+  # to come up than the 300s default before Vagrant gives up.
+  config.vm.boot_timeout = 600
 
   # Shared secret used by both nodes to join the same K3s cluster. Fixing it
   # here means the worker doesn't have to wait on the synced folder to see a

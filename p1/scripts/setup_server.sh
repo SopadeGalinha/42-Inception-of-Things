@@ -15,6 +15,31 @@ IFACE=$(ip -4 -o addr show | awk -v ip="$SERVER_IP" '$0 ~ ip {print $2; exit}')
 echo "=== Installing K3s in Server (Controller) mode ==="
 echo "Using network interface: ${IFACE}"
 
+# Nested virtualization (this VM runs inside another VirtualBox VM) corrupts
+# TCP checksum/segmentation offload on the virtio NIC and black-holes larger
+# TCP payloads (ICMP and tiny requests still work, but K3s's mTLS handshake
+# and cert exchange don't). Disabling offload and dropping the MTU works
+# around it; the systemd unit reapplies both on every boot since they don't
+# persist on their own.
+ethtool -K "${IFACE}" tx off rx off gso off gro off tso off 2>/dev/null || true
+ip link set dev "${IFACE}" mtu 1400
+cat > /etc/systemd/system/disable-nic-offload.service <<EOF
+[Unit]
+Description=Disable NIC offload and cap MTU on ${IFACE} (nested virtualization workaround)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/ethtool -K ${IFACE} tx off rx off gso off gro off tso off
+ExecStart=/sbin/ip link set dev ${IFACE} mtu 1400
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now disable-nic-offload.service
+
 # Install K3s in server mode
 # --write-kubeconfig-mode 644: Makes kubeconfig readable by all users
 # --node-ip: Sets the IP address to advertise for this node
