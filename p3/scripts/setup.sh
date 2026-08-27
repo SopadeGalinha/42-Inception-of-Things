@@ -22,8 +22,6 @@ set -e  # Exit on any error
 CLUSTER_NAME="iot"
 ARGOCD_NAMESPACE="argocd"
 DEV_NAMESPACE="dev"
-GITHUB_REPO="https://github.com/SopadeGalinha/42-Inception-of-Things.git"
-APP_PATH="p3/confs/app"  # Path inside the repo where app manifests are stored
 
 #-------------------------------------------------------------------------------
 # Color codes for pretty output
@@ -67,34 +65,20 @@ wait_for_pods() {
 }
 
 #-------------------------------------------------------------------------------
-# Step 1: Verify Prerequisites
+# Step 1: Install Prerequisites
 #-------------------------------------------------------------------------------
 verify_prerequisites() {
-    log_info "Verifying prerequisites..."
-    
-    # Check Docker
-    if ! command -v docker &> /dev/null; then
-        log_error "Docker is not installed. Please install Docker first."
-        exit 1
-    fi
-    
+    log_info "Installing/verifying prerequisites (Docker, kubectl, k3d)..."
+
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    "$SCRIPT_DIR/install_dependencies.sh"
+
     if ! docker info &> /dev/null; then
-        log_error "Docker daemon is not running. Please start Docker."
+        log_error "Docker was installed but the daemon isn't reachable yet."
+        log_info "If Docker was just installed, log out/in (or run 'newgrp docker') and re-run this script."
         exit 1
     fi
-    
-    # Check K3d
-    if ! command -v k3d &> /dev/null; then
-        log_error "K3d is not installed. Install it with:"
-        echo "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"
-        exit 1
-    fi
-    
-    # Check kubectl
-    if ! command -v kubectl &> /dev/null; then
-        log_warning "kubectl not found. Installing via K3d..."
-    fi
-    
+
     log_success "All prerequisites verified!"
 }
 
@@ -201,48 +185,24 @@ configure_argocd_access() {
 #-------------------------------------------------------------------------------
 deploy_application() {
     log_info "Deploying application via Argo CD..."
-    
+
     # Get the directory where this script is located
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     ARGOCD_APP_MANIFEST="$SCRIPT_DIR/../confs/argocd-app.yaml"
-    
-    # Apply the Argo CD Application manifest
-    if [[ -f "$ARGOCD_APP_MANIFEST" ]]; then
-        kubectl apply -f "$ARGOCD_APP_MANIFEST"
-        log_success "Argo CD Application created!"
-    else
+
+    if [[ ! -f "$ARGOCD_APP_MANIFEST" ]]; then
         log_error "Application manifest not found at: $ARGOCD_APP_MANIFEST"
-        log_info "Creating application manifest..."
-        
-        # Create the application inline if manifest doesn't exist
-        kubectl apply -f - <<EOF
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: wil42-playground
-  namespace: $ARGOCD_NAMESPACE
-spec:
-  project: default
-  source:
-    repoURL: $GITHUB_REPO
-    targetRevision: HEAD
-    path: $APP_PATH
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: $DEV_NAMESPACE
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-EOF
-        log_success "Argo CD Application created inline!"
+        exit 1
     fi
-    
+
+    # Apply the Argo CD Application manifest (source of truth lives in Git,
+    # see p3/confs/argocd-app.yaml)
+    kubectl apply -f "$ARGOCD_APP_MANIFEST"
+    log_success "Argo CD Application created!"
+
     log_info "Waiting for application to sync..."
     sleep 15  # Give Argo CD time to sync
-    
+
     # Check application status
     kubectl get applications -n "$ARGOCD_NAMESPACE"
 }

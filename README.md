@@ -6,7 +6,7 @@ A System Administration project focused on Kubernetes, using K3s and K3d with Va
 
 - [Part 1: K3s and Vagrant](#part-1-k3s-and-vagrant)
 - [Part 2: K3s and Three Simple Applications](#part-2-k3s-and-three-simple-applications)
-- [Part 3: K3d and Argo CD](#part-3-k3d-and-argo-cd) *(coming soon)*
+- [Part 3: K3d and Argo CD](#part-3-k3d-and-argo-cd)
 
 ---
 
@@ -41,8 +41,6 @@ This part sets up a K3s cluster with two virtual machines using Vagrant: one **S
 ```
 p1/
 ├── Vagrantfile              # VM definitions and configuration
-├── confs/
-│   └── node-token           # Auto-generated K3s join token
 └── scripts/
     ├── setup_server.sh      # K3s server installation script
     └── setup_worker.sh      # K3s agent installation script
@@ -52,9 +50,9 @@ p1/
 
 ### Base Box
 ```ruby
-config.vm.box = "ubuntu/bionic64"
+config.vm.box = "ubuntu/noble64"
 ```
-Uses Ubuntu 18.04 LTS as the base operating system. This is a stable, well-supported distribution for K3s.
+Uses Ubuntu 24.04 LTS (Noble Numbat), the latest Ubuntu LTS release, as the base operating system.
 
 ### Server Configuration
 ```ruby
@@ -65,7 +63,7 @@ config.vm.define "jhogoncaS" do |s|
     vb.memory = "1024"
     vb.cpus = 1
   end
-  s.vm.provision "shell", path: "scripts/setup_server.sh"
+  s.vm.provision "shell", path: "scripts/setup_server.sh", env: { "K3S_TOKEN" => k3s_token }
 end
 ```
 
@@ -85,7 +83,7 @@ config.vm.define "jhogoncaSW" do |sw|
     vb.memory = "512"
     vb.cpus = 1
   end
-  sw.vm.provision "shell", path: "scripts/setup_worker.sh"
+  sw.vm.provision "shell", path: "scripts/setup_worker.sh", env: { "K3S_TOKEN" => k3s_token }
 end
 ```
 
@@ -103,11 +101,14 @@ end
 Installs K3s in **server/controller mode**.
 
 ```bash
+IFACE=$(ip -4 -o addr show | awk -v ip="$SERVER_IP" '$0 ~ ip {print $2; exit}')
+
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
     --write-kubeconfig-mode 644 \
     --node-ip ${SERVER_IP} \
     --bind-address ${SERVER_IP} \
-    --flannel-iface enp0s8" sh -
+    --flannel-iface ${IFACE} \
+    --token ${K3S_TOKEN}" sh -
 ```
 
 | Flag | Purpose |
@@ -115,51 +116,52 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
 | `--write-kubeconfig-mode 644` | Makes the kubeconfig file readable by all users, allowing `kubectl` to work without sudo |
 | `--node-ip` | Specifies the IP address to advertise for this node. Uses the private network IP instead of NAT |
 | `--bind-address` | IP address the API server listens on. Must match the private network IP |
-| `--flannel-iface enp0s8` | **See explanation below** |
+| `--flannel-iface ${IFACE}` | **See explanation below** |
+| `--token ${K3S_TOKEN}` | **See explanation below** |
 
-#### Why `--flannel-iface enp0s8`?
+#### Why detect the interface instead of hardcoding `enp0s8`?
 
 VirtualBox VMs have multiple network interfaces:
-- `enp0s3` (or `eth0`): NAT interface for internet access (10.0.2.x)
-- `enp0s8` (or `eth1`): Private network interface (192.168.56.x)
+- One NAT interface for internet access (10.0.2.x)
+- One private-network interface (192.168.56.x)
 
-**Flannel** is the CNI (Container Network Interface) used by K3s for pod networking. By default, Flannel might pick the wrong interface (NAT), causing pods on different nodes to be unable to communicate.
+**Flannel** is the CNI (Container Network Interface) used by K3s for pod networking. By default, Flannel might pick the wrong interface (NAT), causing pods on different nodes to be unable to communicate. The interface name (`enp0s8`, `eth1`, ...) depends on the base box and provider, so instead of hardcoding it, the script looks up whichever interface already has the `192.168.56.x` address assigned and passes that to `--flannel-iface`.
 
-Setting `--flannel-iface enp0s8` forces Flannel to use the private network interface, ensuring proper pod-to-pod communication across nodes.
-
-#### Token Sharing
+#### Shared cluster token
 
 ```bash
-cp /var/lib/rancher/k3s/server/node-token /vagrant/confs/node-token
+k3s_token = "iot-k3s-cluster-token"   # defined once in the Vagrantfile
 ```
 
-The server generates a unique token that workers need to join the cluster. This token is copied to `/vagrant/confs/` which is a **synced folder** - it maps to `p1/confs/` on the host machine, making it accessible to both VMs.
+Rather than letting K3s auto-generate a token on the server and copying it to the worker through the `/vagrant` synced folder (which needs a polling loop and depends on VirtualBox shared-folder sync), the Vagrantfile defines a single fixed token and passes it to both provisioning scripts via the `env:` option of `config.vm.provision`. The server starts with `--token ${K3S_TOKEN}`, and the worker joins with the same value — no shared file, no race condition.
 
 ### setup_worker.sh
 
 Installs K3s in **agent/worker mode**.
 
 ```bash
-# Wait for token
-while [ ! -f /vagrant/confs/node-token ]; do
+IFACE=$(ip -4 -o addr show | awk -v ip="$WORKER_IP" '$0 ~ ip {print $2; exit}')
+
+# Wait until the server's API is actually accepting connections
+until curl -sk --max-time 2 "https://${SERVER_IP}:6443" >/dev/null 2>&1; do
     sleep 5
 done
 
-NODE_TOKEN=$(cat /vagrant/confs/node-token)
-
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="agent \
     --server https://${SERVER_IP}:6443 \
-    --token ${NODE_TOKEN} \
+    --token ${K3S_TOKEN} \
     --node-ip ${WORKER_IP} \
-    --flannel-iface enp0s8" sh -
+    --flannel-iface ${IFACE}" sh -
 ```
 
 | Flag | Purpose |
 |------|---------|
 | `--server` | URL of the K3s server API (port 6443) |
-| `--token` | Authentication token to join the cluster |
+| `--token` | Shared secret configured on the server (see Vagrantfile) |
 | `--node-ip` | IP address to advertise for this node |
-| `--flannel-iface enp0s8` | Use private network for pod networking |
+| `--flannel-iface ${IFACE}` | Auto-detected private-network interface |
+
+The worker waits on an actual TCP/TLS handshake against the server's API port, rather than polling for a token file — it doesn't depend on synced-folder propagation at all.
 
 ## Usage
 
@@ -227,7 +229,7 @@ The `private_network` in Vagrant creates a host-only network that allows:
 - VMs are isolated from external networks (except through NAT)
 
 ### Synced Folders
-Vagrant automatically syncs the project folder (`p1/`) to `/vagrant/` inside each VM. This is used to share the node-token between server and worker.
+Vagrant automatically syncs the project folder (`p1/`) to `/vagrant/` inside each VM. It isn't needed for the cluster token anymore (that's passed via provisioner environment variables — see [Shared cluster token](#shared-cluster-token) above), but it's still how the provisioning scripts themselves reach the VM.
 
 ---
 
@@ -635,7 +637,7 @@ Instead of manually running `kubectl apply`, Argo CD:
 │                                    ▼                                       │
 │   ┌──────────────────────────────────────────────────────────────────┐    │
 │   │                         GitHub Repository                         │    │
-│   │              github.com/SopadeGalinha/42-Inception-of-Things      │    │
+│   │        github.com/SopadeGalinha/jhogonca-Inception-of-Things      │    │
 │   │                                                                   │    │
 │   │    p3/confs/app/deployment.yaml  ←─── Source of truth for app    │    │
 │   │                                                                   │    │
@@ -649,31 +651,34 @@ Instead of manually running `kubectl apply`, Argo CD:
 ```
 p3/
 ├── scripts/
-│   └── setup.sh              # Main setup script (installs everything)
+│   ├── install_dependencies.sh  # Installs Docker, kubectl and k3d if missing
+│   └── setup.sh                 # Main setup script (installs everything)
 └── confs/
-    ├── argocd-app.yaml       # Argo CD Application resource
+    ├── argocd-app.yaml          # Argo CD Application resource
     └── app/
-        └── deployment.yaml   # wil42/playground app (synced by Argo CD)
+        └── deployment.yaml      # wil42/playground app (synced by Argo CD)
 ```
 
 ## Prerequisites
 
-Before running Part 3, ensure you have:
+`setup.sh` installs everything it needs by calling `install_dependencies.sh` automatically — there is nothing to install manually. That script:
 
-| Tool | Installation |
+| Tool | How it's installed |
 |------|-------------|
-| Docker | Must be running |
-| K3d | `curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \| bash` |
-| kubectl | Usually bundled with K3d, or install separately |
+| Docker | Official convenience script (`get.docker.com`), enabled as a service |
+| kubectl | Official binary release for the detected stable Kubernetes version |
+| k3d | Official install script (`k3d-io/k3d/install.sh`) |
+
+Each step is skipped automatically if the tool is already present, so the script is safe to re-run.
 
 ## Setup Script Explained
 
 The `setup.sh` script performs these steps:
 
-### Step 1: Verify Prerequisites
+### Step 1: Install Prerequisites
 ```bash
-docker info          # Check Docker is running
-k3d version          # Check K3d is installed
+./install_dependencies.sh   # Installs Docker, kubectl, k3d (skips what's already there)
+docker info                 # Then confirms the Docker daemon is reachable
 ```
 
 ### Step 2: Create K3d Cluster
@@ -720,7 +725,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 ### Step 6: Deploy Application via Argo CD
 The script applies the `argocd-app.yaml` which tells Argo CD to:
-- Watch: `github.com/SopadeGalinha/42-Inception-of-Things`
+- Watch: `github.com/SopadeGalinha/jhogonca-Inception-of-Things`
 - Path: `p3/confs/app/`
 - Deploy to: `dev` namespace
 
@@ -735,7 +740,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/SopadeGalinha/42-Inception-of-Things.git
+    repoURL: https://github.com/SopadeGalinha/jhogonca-Inception-of-Things.git
     targetRevision: HEAD
     path: p3/confs/app
   destination:

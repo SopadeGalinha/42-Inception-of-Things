@@ -8,14 +8,19 @@ set -e
 # Define the server IP
 SERVER_IP="192.168.56.110"
 
+# Detect the interface that already carries the private-network IP instead
+# of hardcoding a name like enp0s8, which can vary across base boxes.
+IFACE=$(ip -4 -o addr show | awk -v ip="$SERVER_IP" '$0 ~ ip {print $2; exit}')
+
 echo "=== Installing K3s in Server mode ==="
+echo "Using network interface: ${IFACE}"
 
 # Install K3s in server mode
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
     --write-kubeconfig-mode 644 \
     --node-ip ${SERVER_IP} \
     --bind-address ${SERVER_IP} \
-    --flannel-iface enp0s8" sh -
+    --flannel-iface ${IFACE}" sh -
 
 # Wait for K3s to be ready
 echo "=== Waiting for K3s to be ready ==="
