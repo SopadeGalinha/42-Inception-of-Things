@@ -4,6 +4,18 @@ This documents exactly how the `iot-base` VM was built at school, so you can
 reproduce the same environment at home. It's a personal reference, not part
 of the graded repo.
 
+> **Superseded (2026-09-02): the project now uses Option B, with no-sudo
+> Vagrant.** Testing at home proved that double-nesting (Option A, this
+> file) is unreliable — see `info/iot-base-home-setup-log.md` for the full
+> story, ending in a genuine CPU-level triple fault under nested
+> virtualization. Separately, the school account turning out to have **no
+> sudo at all** ruled out Option B's `sudo apt install vagrant` as written
+> below too. The actual working setup is single-level virtualization (no
+> wrapper VM) with Vagrant installed **without sudo** via
+> `scripts/vagrant-install-nosudo.sh` + `scripts/vagrant-wrapper.sh`. See
+> `info/school-machine-checklist.md` for the exact steps to follow at
+> school. This file is kept only as a historical record of Option A.
+
 ## Before you replicate: one important decision
 
 At school, `iot-base` exists only because the student account has **no

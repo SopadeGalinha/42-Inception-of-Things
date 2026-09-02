@@ -7,6 +7,28 @@ A System Administration project focused on Kubernetes, using K3s and K3d with Va
 - [Part 1: K3s and Vagrant](#part-1-k3s-and-vagrant)
 - [Part 2: K3s and Three Simple Applications](#part-2-k3s-and-three-simple-applications)
 - [Part 3: K3d and Argo CD](#part-3-k3d-and-argo-cd)
+- [Bonus: Local GitLab](#bonus-local-gitlab)
+- [Running without sudo](#running-without-sudo)
+
+---
+
+## Running without sudo
+
+If the target machine has no `sudo` access for installing Vagrant (e.g. via
+apt/HashiCorp's repo), use the portable installer instead — it extracts the
+official `.deb` into `$HOME/.local` with no root required:
+
+```bash
+./scripts/vagrant-install-nosudo.sh
+cd p1   # or p2
+../scripts/vagrant-wrapper.sh up
+```
+
+`scripts/vagrant-wrapper.sh` is a drop-in replacement for the `vagrant`
+command everywhere below. See the comments in both scripts for how/why this
+works, and `TROUBLESHOOTING.md` for the full story. VirtualBox itself still
+needs to be genuinely installed system-wide (it ships setuid-root helpers
+that need a real install) — only Vagrant is covered by this workaround.
 
 ---
 
@@ -26,7 +48,7 @@ This part sets up a K3s cluster with two virtual machines using Vagrant: one **S
 │  │                     │    │                     │        │
 │  │  IP: 192.168.56.110 │    │  IP: 192.168.56.111 │        │
 │  │  K3s: controller    │◄───│  K3s: agent         │        │
-│  │  RAM: 1024 MB       │    │  RAM: 512 MB        │        │
+│  │  RAM: 2048 MB       │    │  RAM: 1024 MB       │        │
 │  │  CPU: 1             │    │  CPU: 1             │        │
 │  └─────────────────────┘    └─────────────────────┘        │
 │              │                        │                    │
@@ -60,7 +82,7 @@ config.vm.define "jhogoncaS" do |s|
   s.vm.hostname = "jhogoncaS"
   s.vm.network "private_network", ip: "192.168.56.110"
   s.vm.provider "virtualbox" do |vb|
-    vb.memory = "1024"
+    vb.memory = "2048"
     vb.cpus = 1
   end
   s.vm.provision "shell", path: "scripts/setup_server.sh", env: { "K3S_TOKEN" => k3s_token }
@@ -71,7 +93,7 @@ end
 |---------|-------|---------|
 | `hostname` | jhogoncaS | Machine name with "S" suffix (Server) as per subject |
 | `private_network` | 192.168.56.110 | Dedicated IP for inter-VM communication |
-| `memory` | 1024 MB | Minimum recommended for K3s server |
+| `memory` | 2048 MB | The subject's advised 512/1024MB was sized for its own screenshots' k3s release (v1.21.4); current stable k3s (v1.36.x) needs more — see `TROUBLESHOOTING.md` |
 | `cpus` | 1 | Minimum as specified in subject |
 
 ### Worker Configuration
@@ -80,7 +102,7 @@ config.vm.define "jhogoncaSW" do |sw|
   sw.vm.hostname = "jhogoncaSW"
   sw.vm.network "private_network", ip: "192.168.56.111"
   sw.vm.provider "virtualbox" do |vb|
-    vb.memory = "512"
+    vb.memory = "1024"
     vb.cpus = 1
   end
   sw.vm.provision "shell", path: "scripts/setup_worker.sh", env: { "K3S_TOKEN" => k3s_token }
@@ -91,7 +113,7 @@ end
 |---------|-------|---------|
 | `hostname` | jhogoncaSW | Machine name with "SW" suffix (ServerWorker) as per subject |
 | `private_network` | 192.168.56.111 | Dedicated IP for inter-VM communication |
-| `memory` | 512 MB | Minimum as specified in subject |
+| `memory` | 1024 MB | Bumped from the subject's advised 512MB — see `TROUBLESHOOTING.md` |
 | `cpus` | 1 | Minimum as specified in subject |
 
 ## Setup Scripts Explained
@@ -637,7 +659,7 @@ Instead of manually running `kubectl apply`, Argo CD:
 │                                    ▼                                       │
 │   ┌──────────────────────────────────────────────────────────────────┐    │
 │   │                         GitHub Repository                         │    │
-│   │        github.com/SopadeGalinha/jhogonca-Inception-of-Things      │    │
+│   │        github.com/SopadeGalinha/42-Inception-of-Things      │    │
 │   │                                                                   │    │
 │   │    p3/confs/app/deployment.yaml  ←─── Source of truth for app    │    │
 │   │                                                                   │    │
@@ -670,6 +692,13 @@ p3/
 | k3d | Official install script (`k3d-io/k3d/install.sh`) |
 
 Each step is skipped automatically if the tool is already present, so the script is safe to re-run.
+
+**The GitHub repo referenced by `p3/confs/argocd-app.yaml` must be public.**
+Argo CD's `Application` resource clones it over plain HTTPS with no
+credentials configured — this also matches the subject's own requirement
+("You must be able to change the version from your **public** GitHub
+repository"). If it's private, the Application sits at `SYNC STATUS:
+Unknown` forever and nothing deploys to the `dev` namespace.
 
 ## Setup Script Explained
 
@@ -725,7 +754,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 ### Step 6: Deploy Application via Argo CD
 The script applies the `argocd-app.yaml` which tells Argo CD to:
-- Watch: `github.com/SopadeGalinha/jhogonca-Inception-of-Things`
+- Watch: `github.com/SopadeGalinha/42-Inception-of-Things`
 - Path: `p3/confs/app/`
 - Deploy to: `dev` namespace
 
@@ -740,7 +769,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/SopadeGalinha/jhogonca-Inception-of-Things.git
+    repoURL: https://github.com/SopadeGalinha/42-Inception-of-Things.git
     targetRevision: HEAD
     path: p3/confs/app
   destination:
@@ -945,3 +974,92 @@ This separation follows best practices:
 - Argo CD is infrastructure
 - Applications are workloads
 - Different RBAC rules can apply
+
+---
+
+# Bonus: Local GitLab
+
+This adds a local GitLab instance (Helm chart, official `gitlab/gitlab`
+chart) to the Part 3 lab, in its own `gitlab` namespace, acting as an
+alternative Git source for the same Argo CD Application.
+
+## File Structure
+
+```
+bonus/
+├── Vagrantfile                    # Single VM (10GB RAM, 4 CPU — GitLab is heavy)
+├── scripts/
+│   ├── install_dependencies.sh    # Docker, kubectl, k3d, Helm
+│   └── setup.sh                   # Full pipeline, see GIT_SOURCE below
+└── confs/
+    ├── gitlab-datastores.yaml     # Standalone Postgres/Redis/MinIO for GitLab
+    ├── gitlab-values.yaml         # Trimmed Helm values for a local/demo GitLab
+    ├── argocd-app-gitlab.yaml     # Argo CD Application sourced from local GitLab
+    ├── argocd-app-github.yaml     # Same Application sourced from the public GitHub repo
+    └── app/deployment.yaml        # wil42/playground manifests pushed into GitLab
+```
+
+## The GIT_SOURCE rule
+
+`setup.sh` reads a `GIT_SOURCE` environment variable to decide which config
+Argo CD syncs from — this is the switch between "the bonus" and "the normal
+p3 repo config":
+
+```bash
+cd bonus
+../scripts/vagrant-install-nosudo.sh   # if needed
+./setup.sh                              # GIT_SOURCE=gitlab (default): local GitLab
+GIT_SOURCE=github ./setup.sh            # same public GitHub repo/path as the mandatory p3
+```
+
+| `GIT_SOURCE` | Behavior |
+|---|---|
+| `gitlab` (default) | Deploys standalone Postgres/Redis/MinIO, installs GitLab via Helm, seeds a `root/playground` project with the app manifests, creates an Argo CD repo credential + `Application` pointing at GitLab's in-cluster service. |
+| `github` | Skips the entire GitLab install; applies `bonus/confs/argocd-app-github.yaml` — the exact same public-repo Application already used and tested for the mandatory p3 — proving "everything you did in Part 3" also works unchanged in this environment. |
+
+Both modes were verified in the same running cluster: deleting one
+`Application` and applying the other correctly re-synced `dev` from the new
+source each time.
+
+## Why GitLab needs its own Postgres/Redis/MinIO
+
+The official `gitlab/gitlab` Helm chart (10.x, appVersion v19.x) no longer
+bundles PostgreSQL/Redis/object-storage subcharts — recent chart versions
+require external instances for all three, even for a local trial. Rather
+than pull in a third-party chart just to satisfy that, `gitlab-datastores.yaml`
+runs minimal single-Pod Postgres 17 (chart requires ≥17), Redis, and MinIO
+deployments in the same `gitlab` namespace, backed by k3d's default
+`local-path` PVCs — no HA, which is fine for a local/demo instance.
+
+## Key fixes needed to get GitLab running locally (see TROUBLESHOOTING.md for full detail)
+
+- **`global.gatewayApi.enabled` defaults to `true`** in this chart version,
+  which requires Gateway API CRDs we don't have — disabled in favor of
+  plain `nginx-ingress` (the chart's own bundled controller).
+- **k3s's built-in Traefik and GitLab's own nginx-ingress both want
+  port 80** as a `LoadBalancer` — Traefik is disabled at cluster creation
+  (`--k3s-arg "--disable=traefik@server:0"`) so GitLab's controller can bind it.
+- **`toolbox`'s default backup config** unconditionally tries to copy an S3
+  config file that's never created unless backups are explicitly configured
+  — switched `backups.objectStorage.backend` to `azure` (a no-op sleep loop)
+  since this bonus never runs backups.
+- **Postgres needs `max_locks_per_transaction` raised** (256, from the
+  default 64) — GitLab's schema load acquires far more locks than Postgres's
+  default allows in one transaction.
+- **`webservice`/`sidekiq` memory limits** needed real headroom (2200Mi /
+  2000Mi) — the trimmed-down defaults got OOMKilled under actual load.
+- **`global.hosts.domain` is a *base* domain**: the chart prepends its own
+  `gitlab.` — a domain that already starts with `gitlab.` produces
+  `gitlab.gitlab.<domain>`, a hostname nothing routes to.
+
+## Verifying
+
+```bash
+cd bonus
+../scripts/vagrant-wrapper.sh ssh -c "
+  kubectl get applications -n argocd
+  kubectl get pods -n dev
+"
+```
+
+Expected: `wil42-playground` `Synced`/`Healthy`, one pod `Running` in `dev`.

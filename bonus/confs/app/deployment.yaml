@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wil42-playground
+  namespace: dev
+  labels:
+    app: wil42-playground
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wil42-playground
+  template:
+    metadata:
+      labels:
+        app: wil42-playground
+    spec:
+      containers:
+        - name: playground
+          image: wil42/playground:v1
+          ports:
+            - containerPort: 8888
+          resources:
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wil42-playground-service
+  namespace: dev
+  labels:
+    app: wil42-playground
+spec:
+  type: ClusterIP
+  selector:
+    app: wil42-playground
+  ports:
+    - name: http
+      port: 8888
+      targetPort: 8888
+      protocol: TCP

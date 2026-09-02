@@ -1,0 +1,31 @@
+#===============================================================================
+# Argo CD Application Definition — GIT_SOURCE=github mode
+#===============================================================================
+# Deliberately identical in substance to p3/confs/argocd-app.yaml (same repo,
+# same path, same policy) — kept as its own copy here rather than a
+# cross-folder reference to ../../p3/confs/argocd-app.yaml, since bonus/ is
+# meant to be self-contained: it runs in its own VM (bonus/Vagrantfile),
+# which only has this "bonus/" directory synced, not the whole repo. This is
+# what setup.sh applies when run with GIT_SOURCE=github, to prove "everything
+# from Part 3" also works unchanged in the bonus environment.
+#===============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wil42-playground
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/SopadeGalinha/42-Inception-of-Things.git
+    targetRevision: HEAD
+    path: p3/confs/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

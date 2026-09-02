@@ -26,7 +26,7 @@ spec:
   #-----------------------------------------------------------------------------
   source:
     # GitHub repository URL (must be public, or configure credentials for private)
-    repoURL: https://github.com/SopadeGalinha/jhogonca-Inception-of-Things.git
+    repoURL: https://github.com/SopadeGalinha/42-Inception-of-Things.git
     # Which branch/tag/commit to track
     # HEAD means the latest commit on the default branch
     targetRevision: HEAD

@@ -1,0 +1,127 @@
+#===============================================================================
+# Minimal local GitLab values
+#===============================================================================
+# The official gitlab/gitlab chart (10.x, appVersion v19.x) no longer bundles
+# PostgreSQL/Redis subcharts — see bonus/confs/gitlab-datastores.yaml for the
+# plain standalone Postgres/Redis this points at. Everything below trims the
+# chart down to what a single-node local/demo instance actually needs:
+# object storage stays on local disk (the chart's own default when
+# object_store.enabled is false), the container registry / Prometheus /
+# GitLab Runner / Zoekt / OpenBao / cert-manager are all switched off, and
+# every workload is pinned to 1 replica.
+#===============================================================================
+
+global:
+  edition: ce
+
+  hosts:
+    domain: DOMAIN_PLACEHOLDER
+    https: false
+
+  ingress:
+    enabled: true
+    configureCertmanager: false
+    provider: nginx
+    tls:
+      enabled: false
+
+  gatewayApi:
+    enabled: false
+
+  psql:
+    host: postgres.gitlab.svc.cluster.local
+    port: 5432
+    username: gitlab
+    database: gitlabhq_production
+    password:
+      secret: gitlab-postgres-password
+      key: password
+
+  redis:
+    host: redis.gitlab.svc.cluster.local
+    port: 6379
+    auth:
+      enabled: false
+
+  appConfig:
+    object_store:
+      enabled: true
+      connection:
+        secret: gitlab-object-storage
+        key: connection
+    lfs:
+      bucket: git-lfs
+    artifacts:
+      bucket: gitlab-artifacts
+    uploads:
+      bucket: gitlab-uploads
+    packages:
+      bucket: gitlab-packages
+    backups:
+      bucket: gitlab-backups
+
+installCertmanager: false
+
+certmanager-issuer:
+  email: admin@example.com
+
+nginx-ingress:
+  enabled: true
+  controller:
+    service:
+      type: LoadBalancer
+    replicaCount: 1
+
+registry:
+  enabled: false
+
+gitlab-runner:
+  install: false
+
+prometheus:
+  install: false
+
+gitlab-zoekt:
+  install: false
+
+openbao:
+  install: false
+
+gitlab:
+  webservice:
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      requests:
+        cpu: 300m
+        memory: 900Mi
+      limits:
+        cpu: "1"
+        memory: 2200Mi
+  sidekiq:
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      requests:
+        cpu: 150m
+        memory: 600Mi
+      limits:
+        cpu: "1"
+        memory: 2000Mi
+  gitlab-shell:
+    minReplicas: 1
+    maxReplicas: 1
+  gitaly:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 200Mi
+  toolbox:
+    # Default backend is "s3", which unconditionally runs
+    # `cp /etc/gitlab/.s3cfg ...` on startup even with no backups ever
+    # configured/run — with no backup objectStorage secret set, that file
+    # never exists and toolbox crash-loops. We don't run backups in this
+    # local demo, so "azure" (a no-op sleep loop, no file copy) sidesteps it.
+    backups:
+      objectStorage:
+        backend: azure

@@ -132,8 +132,11 @@ create_namespaces() {
 install_argocd() {
     log_info "Installing Argo CD in namespace '$ARGOCD_NAMESPACE'..."
     
-    # Install Argo CD using official manifests
-    kubectl apply -n "$ARGOCD_NAMESPACE" \
+    # Install Argo CD using official manifests. --server-side is required:
+    # the ApplicationSet CRD is large enough that a client-side apply's
+    # kubectl.kubernetes.io/last-applied-configuration annotation exceeds
+    # the 256KiB annotation size limit ("metadata.annotations: Too long").
+    kubectl apply -n "$ARGOCD_NAMESPACE" --server-side --force-conflicts \
         -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
     
     log_info "Waiting for Argo CD pods to be ready..."

@@ -1,0 +1,28 @@
+#===============================================================================
+# Argo CD Application Definition — bonus (sourced from the local GitLab
+# instance instead of GitHub). Same shape as p3/confs/argocd-app.yaml; only
+# the source repo differs.
+#===============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wil42-playground
+  namespace: argocd
+spec:
+  project: default
+  source:
+    # In-cluster GitLab webservice URL — filled in by setup.sh
+    # (GITLAB_REPO_URL) to match whatever the chart actually names the
+    # service, rather than hardcoding it here.
+    repoURL: GITLAB_REPO_URL_PLACEHOLDER
+    targetRevision: HEAD
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

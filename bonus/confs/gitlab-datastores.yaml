@@ -1,0 +1,271 @@
+#===============================================================================
+# Minimal standalone PostgreSQL + Redis for the local GitLab instance.
+#===============================================================================
+# The gitlab/gitlab Helm chart (10.x, appVersion v19.x) no longer bundles
+# PostgreSQL/Redis subcharts — it requires external instances. For a local,
+# single-node, non-HA bonus setup, plain single-Pod Deployments (backed by
+# k3d's default local-path PVCs) are enough; no need for a separate
+# Bitnami/production-grade chart just to satisfy this requirement.
+#===============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitlab
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-postgres-password
+  namespace: gitlab
+type: Opaque
+stringData:
+  password: gitlab-postgres-pw
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: gitlab
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          # GitLab's schema load runs as a single transaction that acquires
+          # far more locks than Postgres's 64-lock default allows ("out of
+          # shared memory... increase max_locks_per_transaction").
+          args:
+            - "-c"
+            - "max_locks_per_transaction=256"
+            - "-c"
+            - "shared_buffers=256MB"
+          env:
+            - name: POSTGRES_USER
+              value: gitlab
+            - name: POSTGRES_DB
+              value: gitlabhq_production
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-postgres-password
+                  key: password
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: postgres
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: gitlab
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: gitlab
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: gitlab
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# GitLab's chart (10.x) requires a real S3-compatible connection configured
+# for artifacts/lfs/uploads/packages — there is no "just use local disk"
+# escape hatch anymore, even with global.appConfig.object_store.enabled:
+# false individually per type. A single MinIO pod is the smallest thing that
+# satisfies this.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-minio-credentials
+  namespace: gitlab
+type: Opaque
+stringData:
+  accesskey: gitlab-minio-user
+  secretkey: gitlab-minio-password
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-object-storage
+  namespace: gitlab
+type: Opaque
+stringData:
+  connection: |
+    provider: AWS
+    aws_access_key_id: gitlab-minio-user
+    aws_secret_access_key: gitlab-minio-password
+    region: us-east-1
+    endpoint: 'http://minio.gitlab.svc.cluster.local:9000'
+    path_style: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          envFrom:
+            - secretRef:
+                name: gitlab-minio-credentials
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: { name: gitlab-minio-credentials, key: accesskey }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: gitlab-minio-credentials, key: secretkey }
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: gitlab
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: gitlab
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-buckets
+  namespace: gitlab
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:latest
+          envFrom:
+            - secretRef:
+                name: gitlab-minio-credentials
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mc alias set gitlab http://minio.gitlab.svc.cluster.local:9000 "$accesskey" "$secretkey"
+              for b in git-lfs gitlab-artifacts gitlab-uploads gitlab-packages gitlab-backups; do
+                mc mb --ignore-existing "gitlab/$b"
+              done

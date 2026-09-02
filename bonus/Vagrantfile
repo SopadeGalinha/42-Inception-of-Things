@@ -1,0 +1,20 @@
+# -*- mode: ruby -*-
+#
+# Bonus: local GitLab added to the Part 3 lab (K3d + Argo CD).
+# GitLab's own Helm chart is heavy (Gitaly, Postgres, Redis, Sidekiq,
+# Webservice, ...) even trimmed down for local/demo use, so this VM gets
+# meaningfully more RAM/CPU than p1/p2/p3 — see confs/gitlab-values.yaml for
+# the resource trims applied on the Kubernetes side too.
+Vagrant.configure("2") do |config|
+  config.vm.box = "ubuntu/jammy64"
+  config.vm.hostname = "jhogoncaBonus"
+  config.vm.network "private_network", ip: "192.168.56.130"
+  config.vm.provider "virtualbox" do |vb|
+    # Measured ~6.2GB actually used by k3d + GitLab + Argo CD + the deployed
+    # app once everything is up (kubectl top nodes), leaving uncomfortably
+    # little headroom at 8192MB. 10240MB keeps real breathing room.
+    vb.memory = "10240"
+    vb.cpus = 4
+  end
+  config.vm.provision "shell", path: "scripts/setup.sh", privileged: false
+end

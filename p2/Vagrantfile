@@ -11,7 +11,12 @@ Vagrant.configure("2") do |config|
     s.vm.hostname = "jhogoncaS"
     s.vm.network "private_network", ip: "192.168.56.110"
     s.vm.provider "virtualbox" do |vb|
-      vb.memory = "1024"
+      # See TROUBLESHOOTING.md / p1's Vagrantfile: modern k3s (v1.36.x)
+      # starves and thrashes at the subject's advised 512/1024MB budget,
+      # which was sized for the k3s release in its screenshots (v1.21.4).
+      # This VM also runs 3 real app deployments plus Traefik on top of the
+      # k3s server, so it needs at least as much headroom as p1's server.
+      vb.memory = "2048"
       vb.cpus = 1
     end
     s.vm.provision "shell", path: "scripts/setup.sh"
