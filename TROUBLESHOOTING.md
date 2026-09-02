@@ -113,11 +113,10 @@ The school account has no `sudo` at all, which rules out `scripts/bootstrap.sh`'
 
 - **Single-level virtualization**, straight on the bare host — no `iot-base`
   wrapper. p1 and p2 each create their own Vagrant VM(s) directly; p3 runs in
-  one more VM of the same kind (see `info/school-machine-checklist.md`).
-  This still satisfies "the whole project has to be done in a virtual
-  machine" per-part, and sidesteps double-nesting entirely (VirtualBox is
-  assumed preinstalled on the school host, per the Environment section
-  below).
+  one more VM of the same kind. This still satisfies "the whole project has
+  to be done in a virtual machine" per-part, and sidesteps double-nesting
+  entirely (VirtualBox is assumed preinstalled on the school host, per the
+  Environment section below).
 - **Vagrant installed without sudo**: the official `.deb` is a portable
   payload once extracted (`ar x` + `tar xzf`, no `dpkg`/root needed) — its
   launcher is a statically-linked Go binary that execs a bundled Ruby
@@ -128,10 +127,11 @@ The school account has no `sudo` at all, which rules out `scripts/bootstrap.sh`'
   from inside an unprivileged user namespace (e.g. a `bwrap` sandbox), not
   from a plain shell with a custom `LD_LIBRARY_PATH`.
 
-See `info/iot-base-vm-config.md` (kept for historical reference — the
-double-nested `iot-base` approach it documents is superseded) and
-`info/iot-base-home-setup-log.md` for the full investigation, including the
-CPU-level triple fault that ruled out double-nesting on this hardware.
+Double-nested virtualization (the `iot-base` wrapper approach) was tried
+first and ruled out on this hardware by a genuine CPU-level triple fault
+under load — see `info/iot-base/` for a from-scratch, Vagrant-based fallback
+wrapper VM kept only in case the direct approach above is somehow blocked
+at school.
 
 ### New finding (2026-09-02): host-level memory pressure can make the p1
 ### worker fail to join with a *misleading* "not authorized" error

@@ -1,0 +1,40 @@
+# -*- mode: ruby -*-
+#
+# Fallback wrapper VM ("iot-base"): a full-sudo Ubuntu VM with nested
+# hardware virtualization enabled, holding its own VirtualBox + Vagrant
+# install. Only needed if the school machine somehow can't run p1/p2/bonus
+# directly on the bare host (the normal, single-level-virtualization setup
+# — see the repo root README.md and TROUBLESHOOTING.md). Not part of the
+# graded submission.
+#
+# Before using this: confirm the host CPU actually supports nested
+# virtualization, or the inner Vagrant/VirtualBox will refuse to boot 64-bit
+# guests:
+#   VBoxManage list hostinfo | grep -i nested
+#   # must say: Processor supports nested HW virtualization: yes
+Vagrant.configure("2") do |config|
+  config.vm.box = "ubuntu/jammy64"
+  config.vm.hostname = "iot-base"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.memory = "8192"
+    vb.cpus = 4
+    # The critical flag: without it, VirtualBox running *inside* this VM
+    # has no hardware virtualization and can't boot 64-bit guests at all.
+    vb.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
+  end
+
+  # Real sudo is available in here (unlike the school's bare host), so a
+  # plain apt install is enough — no portable/no-sudo trick needed.
+  config.vm.provision "shell", inline: <<-SHELL
+    set -e
+    apt-get update -qq
+    apt-get install -y -qq git curl wget gnupg software-properties-common virtualbox
+    wget -qO- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+      | tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+    apt-get update -qq
+    apt-get install -y -qq vagrant
+    echo "iot-base ready: git, VirtualBox, and Vagrant installed. Clone the repo and run p1/p2/p3/bonus from inside here."
+  SHELL
+end
