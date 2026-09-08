@@ -1,0 +1,38 @@
+# -*- mode: ruby -*-
+#
+# Vagrantfile for Part 3: K3d and Argo CD
+#
+# The subject requires "the whole project" (Part 3 included — see its own
+# "install K3d on your virtual machine" wording) to run inside a VM, not on
+# the bare host. Unlike p1/p2, this VM doesn't run VirtualBox internally (no
+# Vagrant/K3s in here, just Docker + k3d), so it's plain single-level
+# virtualization — no nested-hw-virt flag needed, same as bonus's own VM.
+#
+# Provisioning is split into two shell blocks on purpose: install_dependencies.sh
+# adds the vagrant user to the docker group, but that only takes effect on a
+# new login/session (see TROUBLESHOOTING.md) — a single combined provisioner
+# would fail on setup.sh's own docker check on a truly fresh VM. Each
+# separate `config.vm.provision "shell"` block is its own SSH exec, i.e. a
+# fresh session, so splitting them sidesteps the issue instead of requiring
+# a `vagrant provision` retry.
+Vagrant.configure("2") do |config|
+  config.vm.box = "ubuntu/jammy64"
+  config.vm.hostname = "jhogoncaP3"
+  config.vm.network "private_network", ip: "192.168.56.120"
+
+  config.vm.provider "virtualbox" do |vb|
+    # Matches the size already validated for p3 in TROUBLESHOOTING.md
+    # ("tested successfully in a throwaway single VM (4096MB/2 CPU,
+    # generous headroom — not tuned down to a minimum since p3 has no
+    # prescribed VM sizing in the subject)").
+    vb.memory = "4096"
+    vb.cpus = 2
+  end
+
+  config.vm.provision "shell", path: "scripts/install_dependencies.sh", privileged: false
+
+  # inline + explicit /vagrant path (not `path:`, which copies the script to
+  # a /tmp/vagrant-shell* path first) so setup.sh's own BASH_SOURCE-relative
+  # lookup of ../confs/argocd-app.yaml still resolves correctly.
+  config.vm.provision "shell", privileged: false, inline: "bash /vagrant/scripts/setup.sh"
+end

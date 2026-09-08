@@ -30,6 +30,15 @@ sleep 15
 echo "=== Waiting for node to be Ready ==="
 kubectl wait --for=condition=Ready node --all --timeout=120s
 
+# Convenience for the live defense: 'k' alias + completion for kubectl.
+# Guarded with grep so re-provisioning (vagrant provision) doesn't duplicate
+# the lines on every run.
+BASHRC="/home/vagrant/.bashrc"
+grep -qxF 'alias k=kubectl' "$BASHRC" || echo 'alias k=kubectl' >> "$BASHRC"
+grep -qxF 'source <(kubectl completion bash)' "$BASHRC" || echo 'source <(kubectl completion bash)' >> "$BASHRC"
+grep -qxF 'complete -o default -F __start_kubectl k' "$BASHRC" || echo 'complete -o default -F __start_kubectl k' >> "$BASHRC"
+chown vagrant:vagrant "$BASHRC"
+
 echo "=== Deploying applications ==="
 
 # Apply all application configurations

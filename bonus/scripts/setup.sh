@@ -79,6 +79,20 @@ verify_prerequisites() {
 }
 
 #-------------------------------------------------------------------------------
+# Step 1b: kubectl convenience alias
+#-------------------------------------------------------------------------------
+setup_kubectl_alias() {
+    # Convenience for the live defense: 'k' alias + completion for kubectl.
+    # Guarded with grep so re-provisioning (vagrant provision) doesn't
+    # duplicate the lines on every run. Unlike p1/p2, this VM's provisioner
+    # already runs as vagrant (privileged: false, see Vagrantfile), so
+    # $HOME/.bashrc is already the right file/owner without a chown.
+    grep -qxF 'alias k=kubectl' "$HOME/.bashrc" || echo 'alias k=kubectl' >> "$HOME/.bashrc"
+    grep -qxF 'source <(kubectl completion bash)' "$HOME/.bashrc" || echo 'source <(kubectl completion bash)' >> "$HOME/.bashrc"
+    grep -qxF 'complete -o default -F __start_kubectl k' "$HOME/.bashrc" || echo 'complete -o default -F __start_kubectl k' >> "$HOME/.bashrc"
+}
+
+#-------------------------------------------------------------------------------
 # Step 2: Create K3d Cluster
 #-------------------------------------------------------------------------------
 create_cluster() {
@@ -298,6 +312,7 @@ main() {
     echo ""
 
     verify_prerequisites
+    setup_kubectl_alias
     create_cluster
     create_namespaces
 

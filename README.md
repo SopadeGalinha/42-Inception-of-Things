@@ -16,19 +16,26 @@ A System Administration project focused on Kubernetes, using K3s and K3d with Va
 
 If the target machine has no `sudo` access for installing Vagrant (e.g. via
 apt/HashiCorp's repo), use the portable installer instead — it extracts the
-official `.deb` into `$HOME/.local` with no root required:
+official `.deb` into `$HOME/.local` with no root required, and wires up
+`PATH`/`LD_LIBRARY_PATH` in `~/.zshrc`/`~/.bashrc` (idempotently, whichever
+shell rc files exist) so a bare `vagrant` command works afterwards, exactly
+as the rest of this README (and the subject) describes:
 
 ```bash
 ./scripts/vagrant-install-nosudo.sh
+# open a new shell (or `source ~/.zshrc`), then use vagrant normally:
 cd p1   # or p2
-../scripts/vagrant-wrapper.sh up
+vagrant up
 ```
 
-`scripts/vagrant-wrapper.sh` is a drop-in replacement for the `vagrant`
-command everywhere below. See the comments in both scripts for how/why this
-works, and `TROUBLESHOOTING.md` for the full story. VirtualBox itself still
-needs to be genuinely installed system-wide (it ships setuid-root helpers
-that need a real install) — only Vagrant is covered by this workaround.
+Run the installer once per machine/account — re-running it is a no-op if
+Vagrant and the rc block are already in place. If you'd rather not touch
+your dotfiles, `scripts/vagrant-wrapper.sh` is a drop-in replacement for a
+bare `vagrant` command instead (`../scripts/vagrant-wrapper.sh up`). See the
+comments in both scripts for how/why this works, and `TROUBLESHOOTING.md`
+for the full story. VirtualBox itself still needs to be genuinely installed
+system-wide (it ships setuid-root helpers that need a real install) — only
+Vagrant is covered by this workaround.
 
 ---
 
@@ -672,6 +679,7 @@ Instead of manually running `kubectl apply`, Argo CD:
 
 ```
 p3/
+├── Vagrantfile                   # Single VM (jhogoncaP3) that the whole part runs inside
 ├── scripts/
 │   ├── install_dependencies.sh  # Installs Docker, kubectl and k3d if missing
 │   └── setup.sh                 # Main setup script (installs everything)
@@ -683,7 +691,16 @@ p3/
 
 ## Prerequisites
 
-`setup.sh` installs everything it needs by calling `install_dependencies.sh` automatically — there is nothing to install manually. That script:
+Unlike the subject's own description ("without Vagrant this time"), this
+part still runs inside its own single VM (`jhogoncaP3`, plain Ubuntu, no
+nested virtualization — it only runs Docker/k3d, not another hypervisor) —
+see the note in [Running without sudo](#running-without-sudo). That's what
+"Vagrant" is doing here: *inside* that VM there's no more Vagrant, only
+Docker/k3d/kubectl, exactly as the subject describes.
+
+`vagrant up` provisions everything automatically by running
+`install_dependencies.sh` then `setup.sh` inside the VM — there is nothing
+to install manually on the host. `install_dependencies.sh`:
 
 | Tool | How it's installed |
 |------|-------------|
@@ -691,7 +708,7 @@ p3/
 | kubectl | Official binary release for the detected stable Kubernetes version |
 | k3d | Official install script (`k3d-io/k3d/install.sh`) |
 
-Each step is skipped automatically if the tool is already present, so the script is safe to re-run.
+Each step is skipped automatically if the tool is already present, so the script is safe to re-run (e.g. via `vagrant provision`).
 
 **The GitHub repo referenced by `p3/confs/argocd-app.yaml` must be public.**
 Argo CD's `Application` resource clones it over plain HTTPS with no
@@ -838,9 +855,16 @@ spec:
 
 ### Quick Start
 ```bash
-cd p3/scripts
-./setup.sh
+cd p3
+vagrant up            # provisions the VM and runs setup.sh inside it
+vagrant ssh            # then run kubectl/k3d commands from inside jhogoncaP3
 ```
+
+If `vagrant up` stops at "Docker was installed but the daemon isn't
+reachable yet" on a completely fresh VM, that's the documented docker-group
+timing gotcha (see `TROUBLESHOOTING.md`) — run `vagrant provision` once more
+and it continues past it (Docker/kubectl/k3d are already installed by then,
+only the group membership needed a fresh session).
 
 ### Manual Argo CD Access
 ```bash
