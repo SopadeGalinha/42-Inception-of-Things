@@ -101,10 +101,17 @@ verified end to end.
 
 The NIC offload/MTU workaround and the switch to `virtio` NICs (both
 described below) are **not required** for this failure specifically — they
-were a plausible-looking dead end. They're harmless to keep, and might
-still matter if a *real* nested-networking scenario (e.g. an `iot-base`
-style wrapper) is used again later, since that class of bug is real in
-general — it just wasn't what was happening here.
+were a plausible-looking dead end.
+
+**Update (2026-09-05): removed.** Since the final architecture is
+single-level virtualization on the bare host (no `iot-base`, no nesting —
+see the architecture decision right below), the nested-virtio corruption
+class of bug this worked around doesn't apply here at all. Kept as dead
+code it was just unexplained complexity in `p1/Vagrantfile` and
+`p1/scripts/setup_{server,worker}.sh` with no upside for this project's
+actual environment, so it's been stripped out. If a future nested-VM setup
+(e.g. reviving `iot-base`) is ever needed again, this section documents
+the fix to reapply.
 
 ### Architecture decision: no wrapper VM, no sudo needed for Vagrant
 

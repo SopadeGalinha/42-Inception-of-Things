@@ -16,39 +16,6 @@ IFACE=$(ip -4 -o addr show | awk -v ip="$WORKER_IP" '$0 ~ ip {print $2; exit}')
 echo "=== Installing K3s in Agent (Worker) mode ==="
 echo "Using network interface: ${IFACE}"
 
-# Nested virtualization (this VM runs inside another VirtualBox VM) corrupts
-# TCP checksum/segmentation offload on virtio NICs and black-holes larger TCP
-# payloads (ICMP and tiny requests still work, but a large download or K3s's
-# mTLS handshake doesn't). This hits every interface, not just the private
-# one: the NAT interface (used for the k3s.io download right below, and for
-# Vagrant's own provisioning SSH session) is just as affected. Disabling
-# offload and dropping the MTU on ALL interfaces works around it; the
-# systemd unit reapplies both on every boot since they don't persist on
-# their own.
-ALL_IFACES=$(ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$')
-for iface in ${ALL_IFACES}; do
-    ethtool -K "${iface}" tx off rx off gso off gro off tso off 2>/dev/null || true
-    ip link set dev "${iface}" mtu 1400 2>/dev/null || true
-done
-{
-    echo "[Unit]"
-    echo "Description=Disable NIC offload and cap MTU on all interfaces (nested virtualization workaround)"
-    echo "After=network-online.target"
-    echo "Wants=network-online.target"
-    echo
-    echo "[Service]"
-    echo "Type=oneshot"
-    for iface in ${ALL_IFACES}; do
-        echo "ExecStart=/sbin/ethtool -K ${iface} tx off rx off gso off gro off tso off"
-        echo "ExecStart=/sbin/ip link set dev ${iface} mtu 1400"
-    done
-    echo
-    echo "[Install]"
-    echo "WantedBy=multi-user.target"
-} > /etc/systemd/system/disable-nic-offload.service
-systemctl daemon-reload
-systemctl enable --now disable-nic-offload.service
-
 # Wait until the server's API is actually accepting connections, instead of
 # polling for a token file to appear on the synced folder.
 echo "=== Waiting for K3s server API at ${SERVER_IP}:6443 ==="
