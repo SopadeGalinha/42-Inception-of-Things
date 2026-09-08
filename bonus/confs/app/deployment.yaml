@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: wil42-playground
+  name: color-app
   namespace: dev
   labels:
-    app: wil42-playground
+    app: color-app
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: wil42-playground
+      app: color-app
   template:
     metadata:
       labels:
-        app: wil42-playground
+        app: color-app
     spec:
       containers:
-        - name: playground
-          image: wil42/playground:v1
+        - name: color-app
+          image: hmacielp/color-app:1.0.0
           ports:
-            - containerPort: 8888
+            - containerPort: 8080
           resources:
             limits:
               memory: "128Mi"
@@ -31,16 +31,16 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: wil42-playground-service
+  name: color-app-service
   namespace: dev
   labels:
-    app: wil42-playground
+    app: color-app
 spec:
   type: ClusterIP
   selector:
-    app: wil42-playground
+    app: color-app
   ports:
     - name: http
-      port: 8888
-      targetPort: 8888
+      port: 8080
+      targetPort: 8080
       protocol: TCP

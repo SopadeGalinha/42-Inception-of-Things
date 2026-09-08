@@ -69,6 +69,19 @@ verify_prerequisites() {
     # the host side.
     bash /vagrant/scripts/install_dependencies.sh
 
+    # install_dependencies.sh's `usermod -aG docker` only takes effect for a
+    # NEW login/process — this shell was already running before that ran, so
+    # it doesn't see the new group yet. `sg docker` re-execs this whole
+    # script (from its real /vagrant path, not the tmp copy Vagrant's `path:`
+    # provisioner is currently running from) as a fresh process with the
+    # group active, no new SSH session needed. Runs at most once: the
+    # re-exec'd process passes this check (already has the group) and
+    # continues normally instead of looping.
+    if ! id -nG | grep -qw docker && getent group docker | grep -qw "$(id -un)"; then
+        log_info "Docker group membership just changed — re-executing with it active..."
+        exec sg docker -c "bash /vagrant/scripts/setup.sh"
+    fi
+
     if ! docker info &> /dev/null; then
         log_error "Docker was installed but the daemon isn't reachable yet."
         log_info "If Docker was just installed, log out/in (or run 'newgrp docker') and re-run this script."
@@ -206,7 +219,7 @@ seed_gitlab_repo() {
         git config user.email "bonus@example.com"
         git config user.name "bonus-seed"
         git add .
-        git commit -q -m "seed: wil42-playground manifests"
+        git commit -q -m "seed: color-app manifests"
         # Push through the ingress hostname (not a bare IP/port): git-over-http
         # derives the vhost purely from the URL, and ingress-nginx routes by
         # Host header — nip.io resolves this hostname straight back to this

@@ -13,7 +13,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   # Name of the Argo CD Application resource
-  name: wil42-playground
+  name: color-app
   # Must be in the argocd namespace where Argo CD is installed
   namespace: argocd
 spec:

@@ -73,6 +73,19 @@ verify_prerequisites() {
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     "$SCRIPT_DIR/install_dependencies.sh"
 
+    # install_dependencies.sh's `usermod -aG docker` only takes effect for a
+    # NEW login/process — this shell was already running before that ran, so
+    # it doesn't see the new group yet (confirmed: a fresh Vagrant shell
+    # provisioner block doesn't help either, it reuses the same session).
+    # `sg docker` re-execs this whole script as a fresh process with the
+    # group active, no new SSH session needed. Runs at most once: the
+    # re-exec'd process passes this check (already has the group) and
+    # continues normally instead of looping.
+    if ! id -nG | grep -qw docker && getent group docker | grep -qw "$(id -un)"; then
+        log_info "Docker group membership just changed — re-executing with it active..."
+        exec sg docker -c "bash $0"
+    fi
+
     if ! docker info &> /dev/null; then
         log_error "Docker was installed but the daemon isn't reachable yet."
         log_info "If Docker was just installed, log out/in (or run 'newgrp docker') and re-run this script."

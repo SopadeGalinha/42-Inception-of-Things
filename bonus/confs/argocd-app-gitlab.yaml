@@ -6,7 +6,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: wil42-playground
+  name: color-app
   namespace: argocd
 spec:
   project: default

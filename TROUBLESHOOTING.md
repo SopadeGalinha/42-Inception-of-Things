@@ -43,21 +43,48 @@ fired immediately after `vagrant up` finishes can get "Connection refused"
 on port 80 for a few seconds. It resolves on its own; no fix needed, just
 don't demo the `curl` test in the same breath as `vagrant up` finishing.
 
-**p3 needed no fix** — K3d + Argo CD have no VM memory sizing to get wrong in
-the first place (they run in Docker, not a k3s-on-bare-metal VM), and were
-tested successfully in a throwaway single VM (4096MB/2 CPU, generous
-headroom — not tuned down to a minimum since p3 has no prescribed VM sizing
-in the subject). One real gotcha found: `install_dependencies.sh` adds the
-current user to the `docker` group, but that only takes effect on a **new
-login session** — running `setup.sh` immediately after a fresh
-`install_dependencies.sh` in the *same* shell fails at the `docker info`
-check with "Docker was installed but the daemon isn't reachable yet." A
-fresh `vagrant ssh` (or `newgrp docker`) before re-running `setup.sh` fixes
-it, exactly as the script's own error message says. At the school, if
-Docker is genuinely preinstalled (as `TROUBLESHOOTING.md`'s Environment
-section assumes), the user is presumably already in the `docker` group and
-this won't come up at all — it's an artifact of testing on a from-scratch
-VM.
+**p3 needed no VM-sizing fix** — K3d + Argo CD have no VM memory sizing to
+get wrong in the first place (they run in Docker, not a k3s-on-bare-metal
+VM), and were tested successfully in a throwaway single VM (4096MB/2 CPU,
+generous headroom — not tuned down to a minimum since p3 has no prescribed
+VM sizing in the subject). One real gotcha found: `install_dependencies.sh`
+adds the current user to the `docker` group, but that only takes effect on a
+**new login session** — running `setup.sh` immediately after a fresh
+`install_dependencies.sh` in the *same* shell failed at the `docker info`
+check with "Docker was installed but the daemon isn't reachable yet."
+
+**Update (2026-09-08): actually fixed, not just worked around.** At the
+time this was written, p3 had no `Vagrantfile` yet and was being tested by
+running the scripts directly in a throwaway VM over SSH, where a fresh
+`vagrant ssh` (or `newgrp docker`) before re-running `setup.sh` was a
+workable manual fix. Once `p3/Vagrantfile` was actually built (see the
+Architecture decision section below — this was already the intended design,
+just not yet implemented) and `vagrant up` needed to get through this
+automatically in one shot with no human in the loop, that manual step
+wasn't good enough. Also confirmed a second assumption wrong: splitting
+`install_dependencies.sh` and `setup.sh` into two separate
+`config.vm.provision "shell"` blocks does **not** dodge this — Vagrant
+reuses the same SSH session across provisioner blocks, so the group is
+still stale in the second block. The actual fix, in
+`verify_prerequisites()` in both `p3/scripts/setup.sh` and
+`bonus/scripts/setup.sh` (bonus has the identical `install_dependencies.sh`
+pattern and the same latent bug):
+
+```bash
+if ! id -nG | grep -qw docker && getent group docker | grep -qw "$(id -un)"; then
+    log_info "Docker group membership just changed — re-executing with it active..."
+    exec sg docker -c "bash $0"   # bonus hardcodes /vagrant/scripts/setup.sh instead of $0
+fi
+```
+
+`sg docker` re-execs the whole script as a fresh process with the group
+active — no new login/SSH session needed, and it's self-limiting (the
+re-exec'd process passes this check and doesn't loop). Confirmed with a full
+`vagrant destroy -f && vagrant up` from scratch on p3: the log showed
+`Installing Docker...` → `Docker group membership just changed —
+re-executing with it active...` → `Docker already installed, skipping` →
+`All prerequisites verified!`, straight through to `Setup complete!` with
+Argo CD synced and the app deployed, no manual step required.
 
 Two more real bugs found and fixed while validating p3 at home:
 
@@ -120,10 +147,14 @@ The school account has no `sudo` at all, which rules out `scripts/bootstrap.sh`'
 
 - **Single-level virtualization**, straight on the bare host — no `iot-base`
   wrapper. p1 and p2 each create their own Vagrant VM(s) directly; p3 runs in
-  one more VM of the same kind. This still satisfies "the whole project has
-  to be done in a virtual machine" per-part, and sidesteps double-nesting
-  entirely (VirtualBox is assumed preinstalled on the school host, per the
-  Environment section below).
+  one more VM of the same kind (`p3/Vagrantfile` — this was the plan from
+  the start but wasn't actually built until 2026-09-08; until then p3's
+  scripts were being run directly on the bare host/account, which quietly
+  broke the "no sudo" story for p3 specifically, since `install_dependencies.sh`
+  needs real root for `apt`/`curl | sudo sh`). This still satisfies "the
+  whole project has to be done in a virtual machine" per-part, and sidesteps
+  double-nesting entirely (VirtualBox is assumed preinstalled on the school
+  host, per the Environment section below).
 - **Vagrant installed without sudo**: the official `.deb` is a portable
   payload once extracted (`ar x` + `tar xzf`, no `dpkg`/root needed) — its
   launcher is a statically-linked Go binary that execs a bundled Ruby
@@ -139,6 +170,35 @@ first and ruled out on this hardware by a genuine CPU-level triple fault
 under load — see `info/iot-base/` for a from-scratch, Vagrant-based fallback
 wrapper VM kept only in case the direct approach above is somehow blocked
 at school.
+
+### Regression (2026-09-08, fixed same day): exporting `LD_LIBRARY_PATH`
+### globally broke the system `curl`
+
+For convenience, `vagrant-install-nosudo.sh` was changed to also wire up
+`PATH`/`LD_LIBRARY_PATH` in `~/.zshrc` so a bare `vagrant` command works in
+any shell (not just through `vagrant-wrapper.sh`). The first version did
+this with plain `export LD_LIBRARY_PATH=...vagrant-portable-libs...`, which
+applies to *every* command run in that shell, not just `vagrant`. Symptom:
+`curl: /home/jhogonca/.local/vagrant-portable-libs/libcurl.so.4: no version
+information available (required by curl)` on a plain `curl` call — Vagrant's
+bundled `libcurl.so.4` (an older/different ABI) was shadowing the system
+one for every process, not just Vagrant's own.
+
+**Fix:** replace the exported env vars with a shell function that scopes
+`LD_LIBRARY_PATH` to only the `vagrant` invocation:
+
+```sh
+vagrant() {
+    LD_LIBRARY_PATH="$HOME/.local/vagrant-portable-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$HOME/.local/vagrant-portable/opt/vagrant/bin/vagrant" "$@"
+}
+```
+
+No `PATH` export needed either — the function calls the binary by its full
+path directly. Confirmed fixed: `curl --version` back to the clean system
+build, `vagrant --version` still works. Applied to both `~/.zshrc` and
+`scripts/vagrant-install-nosudo.sh`'s `setup_shell_rc()` (so a fresh install
+on another machine gets the safe version too).
 
 ### New finding (2026-09-02): host-level memory pressure can make the p1
 ### worker fail to join with a *misleading* "not authorized" error

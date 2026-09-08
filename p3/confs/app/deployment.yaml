@@ -1,61 +1,61 @@
 #===============================================================================
-# wil42/playground Application Deployment
+# color-app Application Deployment
 #===============================================================================
-# This file defines all Kubernetes resources for the wil42/playground app:
+# This file defines all Kubernetes resources for our own app (built by
+# Heitor, our project partner — source: github.com/HeitorMP/hmaciel-):
 # - Deployment: Runs the container with specified replicas
 # - Service: Exposes the app internally within the cluster
 #
 # GitOps Flow:
 # 1. This file is stored in GitHub
 # 2. Argo CD watches for changes
-# 3. When you change the image tag (v1 → v2), Argo CD deploys the update
+# 3. When you change the image tag (1.0.0 → 2.0.0), Argo CD deploys the update
 #
 # To demonstrate CI/CD:
-# 1. Start with image: wil42/playground:v1
-# 2. Commit and push with image: wil42/playground:v2
+# 1. Start with image: hmacielp/color-app:1.0.0
+# 2. Commit and push with image: hmacielp/color-app:2.0.0
 # 3. Watch Argo CD automatically update the deployment
 #===============================================================================
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: wil42-playground
+  name: color-app
   namespace: dev
   labels:
-    app: wil42-playground
+    app: color-app
 spec:
   # Number of pod replicas to run
   replicas: 1
-  
+
   # Selector must match the pod template labels
   selector:
     matchLabels:
-      app: wil42-playground
-  
+      app: color-app
+
   # Pod template
   template:
     metadata:
       labels:
-        app: wil42-playground
+        app: color-app
     spec:
       containers:
-        - name: playground
+        - name: color-app
           #-----------------------------------------------------------------
           # IMAGE VERSION
           #-----------------------------------------------------------------
           # Change this to demonstrate GitOps CI/CD:
-          # v1 → v2: Edit, commit, push, watch Argo CD update!
+          # 1.0.0 → 2.0.0: Edit, commit, push, watch Argo CD update!
           #
-          # The wil42/playground image:
-          # - v1: Shows "Hello, this is version 1"
-          # - v2: Shows "Hello, this is version 2"
+          # The hmacielp/color-app image is a tiny FastAPI app that renders
+          # a full-page background color, differing between versions.
           #-----------------------------------------------------------------
-          image: wil42/playground:v1
-          
-          # Container port (the app listens on 8888)
+          image: hmacielp/color-app:1.0.0
+
+          # Container port (the app listens on 8080)
           ports:
-            - containerPort: 8888
-          
+            - containerPort: 8080
+
           # Resource limits (good practice)
           resources:
             limits:
@@ -68,21 +68,21 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: wil42-playground-service
+  name: color-app-service
   namespace: dev
   labels:
-    app: wil42-playground
+    app: color-app
 spec:
   # ClusterIP for internal access
   # The Ingress (or port-forward) will expose it externally
   type: ClusterIP
-  
+
   # Select pods with matching labels
   selector:
-    app: wil42-playground
-  
+    app: color-app
+
   ports:
     - name: http
-      port: 8888
-      targetPort: 8888
+      port: 8080
+      targetPort: 8080
       protocol: TCP

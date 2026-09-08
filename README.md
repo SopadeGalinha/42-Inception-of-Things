@@ -24,7 +24,7 @@ as the rest of this README (and the subject) describes:
 ```bash
 ./scripts/vagrant-install-nosudo.sh
 # open a new shell (or `source ~/.zshrc`), then use vagrant normally:
-cd p1   # or p2
+cd p1   # or p2, p3, bonus
 vagrant up
 ```
 
@@ -36,6 +36,15 @@ comments in both scripts for how/why this works, and `TROUBLESHOOTING.md`
 for the full story. VirtualBox itself still needs to be genuinely installed
 system-wide (it ships setuid-root helpers that need a real install) — only
 Vagrant is covered by this workaround.
+
+This is also why **every** part — including p3, despite the subject's own
+"without Vagrant this time" phrasing for that part — runs inside its own
+Vagrant VM: the subject's general guidelines require the whole project to
+run in a virtual machine, and doing so means `apt`/`curl | sudo sh`-style
+installs (Docker, kubectl, k3d, k3s) happen with real root *inside* that
+disposable VM, never needing sudo on the actual host account at all. Only
+Vagrant itself (used to create those VMs in the first place) needs the
+no-sudo workaround above, since it necessarily runs on the host.
 
 ---
 
@@ -653,8 +662,8 @@ Instead of manually running `kubectl apply`, Argo CD:
 │   │   │            dev namespace            │                      │    │  │
 │   │   │                                     │                      │    │  │
 │   │   │   ┌─────────────────────────────┐   │                      │    │  │
-│   │   │   │    wil42/playground:v1      │<──│──────────────────────┘    │  │
-│   │   │   │    (or v2 after update)     │   │    Deploys from Git       │  │
+│   │   │   │    color-app:1.0.0          │<──│──────────────────────┘    │  │
+│   │   │   │    (or 2.0.0 after update)  │   │    Deploys from Git       │  │
 │   │   │   └─────────────────────────────┘   │                           │  │
 │   │   │                                     │                           │  │
 │   │   └─────────────────────────────────────┘                           │  │
@@ -679,20 +688,20 @@ Instead of manually running `kubectl apply`, Argo CD:
 
 ```
 p3/
-├── Vagrantfile                   # Single VM (jhogoncaP3) that the whole part runs inside
+├── Vagrantfile                   # Single VM (jhogoncaS) that the whole part runs inside
 ├── scripts/
 │   ├── install_dependencies.sh  # Installs Docker, kubectl and k3d if missing
 │   └── setup.sh                 # Main setup script (installs everything)
 └── confs/
     ├── argocd-app.yaml          # Argo CD Application resource
     └── app/
-        └── deployment.yaml      # wil42/playground app (synced by Argo CD)
+        └── deployment.yaml      # color-app (synced by Argo CD)
 ```
 
 ## Prerequisites
 
 Unlike the subject's own description ("without Vagrant this time"), this
-part still runs inside its own single VM (`jhogoncaP3`, plain Ubuntu, no
+part still runs inside its own single VM (`jhogoncaS`, plain Ubuntu, no
 nested virtualization — it only runs Docker/k3d, not another hypervisor) —
 see the note in [Running without sudo](#running-without-sudo). That's what
 "Vagrant" is doing here: *inside* that VM there's no more Vagrant, only
@@ -781,7 +790,7 @@ The script applies the `argocd-app.yaml` which tells Argo CD to:
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: wil42-playground
+  name: color-app
   namespace: argocd
 spec:
   project: default
@@ -806,49 +815,52 @@ spec:
 | `prune: true` | If you remove a resource from Git, it's deleted from cluster |
 | `selfHeal: true` | If someone manually changes the cluster, Argo CD reverts it |
 
-## The Application: wil42/playground
+## The Application: color-app
 
-The `wil42/playground` image is a simple web server with two versions:
+Our own app (built by Heitor, project partner — source at
+[github.com/HeitorMP/hmaciel-](https://github.com/HeitorMP/hmaciel-)): a
+tiny FastAPI server that renders a full-page background color, published to
+Docker Hub as `hmacielp/color-app` with two distinct tagged versions:
 
 | Version | Response |
 |---------|----------|
-| `v1` | Shows version 1 message |
-| `v2` | Shows version 2 message |
+| `1.0.0` | Renders one background color |
+| `2.0.0` | Renders a different background color |
 
 ### deployment.yaml
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: wil42-playground
+  name: color-app
   namespace: dev
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: wil42-playground
+      app: color-app
   template:
     metadata:
       labels:
-        app: wil42-playground
+        app: color-app
     spec:
       containers:
-        - name: playground
-          image: wil42/playground:v1   # ← Change to v2 to trigger update
+        - name: color-app
+          image: hmacielp/color-app:1.0.0   # ← Change to 2.0.0 to trigger update
           ports:
-            - containerPort: 8888
+            - containerPort: 8080
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: wil42-playground-service
+  name: color-app-service
   namespace: dev
 spec:
   selector:
-    app: wil42-playground
+    app: color-app
   ports:
-    - port: 8888
-      targetPort: 8888
+    - port: 8080
+      targetPort: 8080
 ```
 
 ## Usage
@@ -857,14 +869,15 @@ spec:
 ```bash
 cd p3
 vagrant up            # provisions the VM and runs setup.sh inside it
-vagrant ssh            # then run kubectl/k3d commands from inside jhogoncaP3
+vagrant ssh            # then run kubectl/k3d commands from inside jhogoncaS
 ```
 
-If `vagrant up` stops at "Docker was installed but the daemon isn't
-reachable yet" on a completely fresh VM, that's the documented docker-group
-timing gotcha (see `TROUBLESHOOTING.md`) — run `vagrant provision` once more
-and it continues past it (Docker/kubectl/k3d are already installed by then,
-only the group membership needed a fresh session).
+`vagrant up` on a fresh VM installs Docker then needs the `vagrant` user's
+new `docker` group membership active in the *same* provisioning session —
+`setup.sh` handles this itself (an `sg docker` re-exec, see
+`TROUBLESHOOTING.md`), so this completes in one `vagrant up` with no manual
+retry needed. Confirmed with a full `vagrant destroy -f && vagrant up` from
+scratch.
 
 ### Manual Argo CD Access
 ```bash
@@ -889,43 +902,44 @@ kubectl get pods -n dev
 kubectl get svc -n dev
 
 # Check app logs
-kubectl logs -n dev -l app=wil42-playground
+kubectl logs -n dev -l app=color-app
 ```
 
 ### Test the Application
 ```bash
-# Port-forward to access the app
-kubectl port-forward svc/wil42-playground-service -n dev 8888:8888
+# Port-forward to access the app (local 8081, since 8080 is already used
+# by the Argo CD UI port-forward above)
+kubectl port-forward svc/color-app-service -n dev 8081:8080
 
 # In another terminal:
-curl http://localhost:8888
+curl http://localhost:8081
 ```
 
-## Demonstrating CI/CD (v1 → v2)
+## Demonstrating CI/CD (1.0.0 → 2.0.0)
 
 This is the key demonstration for Part 3. Follow these steps:
 
 ### 1. Verify Current Version
 ```bash
 # Check the current image
-kubectl get deployment wil42-playground -n dev \
+kubectl get deployment color-app -n dev \
     -o jsonpath='{.spec.template.spec.containers[0].image}'
-# Output: wil42/playground:v1
+# Output: hmacielp/color-app:1.0.0
 ```
 
 ### 2. Update the Git Repository
 Edit `p3/confs/app/deployment.yaml`:
 ```yaml
 # Change this line:
-image: wil42/playground:v1
+image: hmacielp/color-app:1.0.0
 # To:
-image: wil42/playground:v2
+image: hmacielp/color-app:2.0.0
 ```
 
 ### 3. Commit and Push
 ```bash
 git add p3/confs/app/deployment.yaml
-git commit -m "feat(p3): update playground to v2"
+git commit -m "feat(p3): update color-app to 2.0.0"
 git push
 ```
 
@@ -940,9 +954,9 @@ kubectl get pods -n dev -w
 
 ### 5. Verify New Version
 ```bash
-kubectl get deployment wil42-playground -n dev \
+kubectl get deployment color-app -n dev \
     -o jsonpath='{.spec.template.spec.containers[0].image}'
-# Output: wil42/playground:v2
+# Output: hmacielp/color-app:2.0.0
 ```
 
 ## Argo CD UI Walkthrough
@@ -951,7 +965,7 @@ After running `kubectl port-forward svc/argocd-server -n argocd 8080:443`:
 
 1. **Open** https://localhost:8080
 2. **Login** with admin / (password from setup)
-3. **View Application**: Click on `wil42-playground`
+3. **View Application**: Click on `color-app`
 4. **See Resources**: Deployment, Service, ReplicaSet, Pod
 5. **Watch Sync**: After Git push, see "OutOfSync" → "Synced"
 
@@ -1020,7 +1034,7 @@ bonus/
     ├── gitlab-values.yaml         # Trimmed Helm values for a local/demo GitLab
     ├── argocd-app-gitlab.yaml     # Argo CD Application sourced from local GitLab
     ├── argocd-app-github.yaml     # Same Application sourced from the public GitHub repo
-    └── app/deployment.yaml        # wil42/playground manifests pushed into GitLab
+    └── app/deployment.yaml        # color-app manifests pushed into GitLab
 ```
 
 ## The GIT_SOURCE rule
@@ -1086,4 +1100,4 @@ cd bonus
 "
 ```
 
-Expected: `wil42-playground` `Synced`/`Healthy`, one pod `Running` in `dev`.
+Expected: `color-app` `Synced`/`Healthy`, one pod `Running` in `dev`.
