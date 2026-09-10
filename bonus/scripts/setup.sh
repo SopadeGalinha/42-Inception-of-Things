@@ -1,26 +1,4 @@
 #!/bin/bash
-#===============================================================================
-# Bonus: local GitLab added to the Part 3 lab (K3d + Argo CD)
-#===============================================================================
-# Same K3d + Argo CD lab as p3, plus a local GitLab instance (Helm chart, in
-# its own "gitlab" namespace) acting as an alternative Git source for the
-# Argo CD Application.
-#
-# GIT_SOURCE selects which config Argo CD syncs from — this is "the rule to
-# use the bonus or the normal repo config" the setup was built around:
-#   GIT_SOURCE=gitlab (default) -> local GitLab (this bonus), repo seeded
-#                                   automatically by this script
-#   GIT_SOURCE=github           -> the exact same public GitHub repo/path
-#                                   already used (and tested) for p3, via
-#                                   bonus/confs/argocd-app-github.yaml (a
-#                                   deliberate copy of p3/confs/argocd-app.yaml
-#                                   — bonus runs in its own VM with only this
-#                                   folder synced, so it can't reach across
-#                                   into ../p3/) — proves "everything from
-#                                   Part 3" still works unchanged here too
-#
-#   GIT_SOURCE=github ./setup.sh
-#===============================================================================
 
 set -e
 
@@ -54,29 +32,11 @@ wait_for_pods() {
     }
 }
 
-#-------------------------------------------------------------------------------
-# Step 1: Install Prerequisites
-#-------------------------------------------------------------------------------
 verify_prerequisites() {
     log_info "Installing/verifying prerequisites (Docker, kubectl, k3d, Helm)..."
 
-    # Not $(dirname "${BASH_SOURCE[0]}"): Vagrant's shell provisioner copies
-    # this script to a /tmp/vagrant-shell* path before running it, so a
-    # self-relative lookup can't find its sibling scripts/confs. /vagrant is
-    # this VM's synced copy of the bonus/ folder, always at a fixed path.
-    # Invoked with `bash` rather than executed directly: VirtualBox's vboxsf
-    # shared-folder mount doesn't reliably preserve the execute bit set on
-    # the host side.
     bash /vagrant/scripts/install_dependencies.sh
 
-    # install_dependencies.sh's `usermod -aG docker` only takes effect for a
-    # NEW login/process — this shell was already running before that ran, so
-    # it doesn't see the new group yet. `sg docker` re-execs this whole
-    # script (from its real /vagrant path, not the tmp copy Vagrant's `path:`
-    # provisioner is currently running from) as a fresh process with the
-    # group active, no new SSH session needed. Runs at most once: the
-    # re-exec'd process passes this check (already has the group) and
-    # continues normally instead of looping.
     if ! id -nG | grep -qw docker && getent group docker | grep -qw "$(id -un)"; then
         log_info "Docker group membership just changed — re-executing with it active..."
         exec sg docker -c "bash /vagrant/scripts/setup.sh"
@@ -91,23 +51,12 @@ verify_prerequisites() {
     log_success "All prerequisites verified!"
 }
 
-#-------------------------------------------------------------------------------
-# Step 1b: kubectl convenience alias
-#-------------------------------------------------------------------------------
 setup_kubectl_alias() {
-    # Convenience for the live defense: 'k' alias + completion for kubectl.
-    # Guarded with grep so re-provisioning (vagrant provision) doesn't
-    # duplicate the lines on every run. Unlike p1/p2, this VM's provisioner
-    # already runs as vagrant (privileged: false, see Vagrantfile), so
-    # $HOME/.bashrc is already the right file/owner without a chown.
     grep -qxF 'alias k=kubectl' "$HOME/.bashrc" || echo 'alias k=kubectl' >> "$HOME/.bashrc"
     grep -qxF 'source <(kubectl completion bash)' "$HOME/.bashrc" || echo 'source <(kubectl completion bash)' >> "$HOME/.bashrc"
     grep -qxF 'complete -o default -F __start_kubectl k' "$HOME/.bashrc" || echo 'complete -o default -F __start_kubectl k' >> "$HOME/.bashrc"
 }
 
-#-------------------------------------------------------------------------------
-# Step 2: Create K3d Cluster
-#-------------------------------------------------------------------------------
 create_cluster() {
     log_info "Creating K3d cluster: $CLUSTER_NAME"
 
@@ -116,13 +65,6 @@ create_cluster() {
         k3d cluster delete "$CLUSTER_NAME"
     fi
 
-    # Separate API/loadbalancer ports from p3's own cluster so both can run
-    # side by side on the same host if needed. Traefik (k3s's built-in
-    # ingress) is disabled: GitLab's own chart deploys its own nginx-ingress
-    # controller as a LoadBalancer service, and the two fight over port 80 —
-    # whichever's svclb DaemonSet grabs the node port first wins, leaving
-    # the other's pods stuck Pending and traffic silently 404ing on the
-    # loser's default backend.
     k3d cluster create "$CLUSTER_NAME" \
         --api-port 6551 \
         --port "8090:80@loadbalancer" \
@@ -136,9 +78,6 @@ create_cluster() {
     log_success "K3d cluster '$CLUSTER_NAME' created successfully!"
 }
 
-#-------------------------------------------------------------------------------
-# Step 3: Create Namespaces
-#-------------------------------------------------------------------------------
 create_namespaces() {
     log_info "Creating namespaces..."
     kubectl create namespace "$ARGOCD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
@@ -146,9 +85,6 @@ create_namespaces() {
     log_success "Namespaces created: $ARGOCD_NAMESPACE, $DEV_NAMESPACE"
 }
 
-#-------------------------------------------------------------------------------
-# Step 4: Install local GitLab (only for GIT_SOURCE=gitlab)
-#-------------------------------------------------------------------------------
 install_gitlab() {
     log_info "Deploying standalone Postgres/Redis/MinIO for GitLab (namespace: $GITLAB_NAMESPACE)..."
     kubectl apply -f "/vagrant/confs/gitlab-datastores.yaml"
@@ -161,16 +97,7 @@ install_gitlab() {
     helm repo add gitlab https://charts.gitlab.io/ 2>/dev/null || true
     helm repo update gitlab
 
-    # Matches the static private_network IP declared in this folder's own
-    # Vagrantfile. Deliberately not auto-detected from `ip addr`: this VM
-    # has both a NAT interface (10.0.2.x) and this private-network one, and
-    # picking "whichever interface comes first" is unreliable across boxes.
     local host_ip="192.168.56.130"
-    # global.hosts.domain is a BASE domain — the chart prepends its own
-    # "gitlab." (and "kas.", "registry.", ...) to form each service's actual
-    # hostname, so this must NOT already start with "gitlab.". GITLAB_DOMAIN
-    # is script-global: seed_gitlab_repo() and deploy_application() both
-    # need it too.
     GITLAB_DOMAIN="${host_ip}.nip.io"
     log_info "Using nip.io base domain: ${GITLAB_DOMAIN} -> GitLab will be at gitlab.${GITLAB_DOMAIN} (resolves to this VM's own IP, no real DNS needed)"
 
@@ -189,9 +116,6 @@ install_gitlab() {
     log_success "GitLab is up at http://gitlab.${GITLAB_DOMAIN}:8090 (root / see password below)"
 }
 
-#-------------------------------------------------------------------------------
-# Step 5: Seed the local GitLab repo with the p3-style app manifests
-#-------------------------------------------------------------------------------
 seed_gitlab_repo() {
     log_info "Creating a root Personal Access Token inside GitLab..."
     kubectl exec -n "$GITLAB_NAMESPACE" deploy/gitlab-toolbox -- gitlab-rails runner "
@@ -220,10 +144,6 @@ seed_gitlab_repo() {
         git config user.name "bonus-seed"
         git add .
         git commit -q -m "seed: color-app manifests"
-        # Push through the ingress hostname (not a bare IP/port): git-over-http
-        # derives the vhost purely from the URL, and ingress-nginx routes by
-        # Host header — nip.io resolves this hostname straight back to this
-        # VM's own IP, so no /etc/hosts entry is needed.
         git push -f "http://root:${GITLAB_ROOT_PAT}@gitlab.${GITLAB_DOMAIN}:8090/${GITLAB_PROJECT_PATH}.git" main:main
     )
     rm -rf "$seed_dir"
@@ -231,9 +151,6 @@ seed_gitlab_repo() {
     log_success "GitLab repo seeded: ${GITLAB_PROJECT_PATH}"
 }
 
-#-------------------------------------------------------------------------------
-# Step 6: Install Argo CD
-#-------------------------------------------------------------------------------
 install_argocd() {
     log_info "Installing Argo CD in namespace '$ARGOCD_NAMESPACE'..."
     kubectl apply -n "$ARGOCD_NAMESPACE" --server-side --force-conflicts \
@@ -245,9 +162,6 @@ install_argocd() {
     log_success "Argo CD installed successfully!"
 }
 
-#-------------------------------------------------------------------------------
-# Step 7: Configure Argo CD Access
-#-------------------------------------------------------------------------------
 configure_argocd_access() {
     log_info "Configuring Argo CD access..."
     kubectl patch svc argocd-server -n "$ARGOCD_NAMESPACE" -p '{"spec": {"type": "NodePort"}}'
@@ -264,9 +178,6 @@ configure_argocd_access() {
     echo ""
 }
 
-#-------------------------------------------------------------------------------
-# Step 8: Wire the Argo CD Application to the selected source
-#-------------------------------------------------------------------------------
 deploy_application() {
 
     if [ "$GIT_SOURCE" = "gitlab" ]; then
@@ -293,9 +204,6 @@ deploy_application() {
     kubectl get applications -n "$ARGOCD_NAMESPACE"
 }
 
-#-------------------------------------------------------------------------------
-# Step 9: Show Status
-#-------------------------------------------------------------------------------
 show_status() {
     echo ""
     echo "======================================"
@@ -314,9 +222,6 @@ show_status() {
     log_info "Dev Namespace Pods:"; kubectl get pods -n "$DEV_NAMESPACE" 2>/dev/null || echo "No pods yet"; echo ""
 }
 
-#-------------------------------------------------------------------------------
-# Main
-#-------------------------------------------------------------------------------
 main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"

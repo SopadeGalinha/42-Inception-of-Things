@@ -1,17 +1,4 @@
 #!/bin/bash
-#===============================================================================
-# Bootstrap script for a fresh lab VM (e.g. the base VM you set up at school)
-#===============================================================================
-# Installs the tools shared by the whole project:
-# - git, curl
-# - VirtualBox + Vagrant (needed by p1 and p2)
-#
-# p3's own dependencies (Docker, kubectl, k3d) are installed automatically by
-# p3/scripts/install_dependencies.sh, so they're not duplicated here.
-#
-# Assumes a Debian/Ubuntu base (matches the ubuntu/noble64 Vagrant boxes used
-# in p1 and p2). Run with a user that has sudo access.
-#===============================================================================
 
 set -e
 

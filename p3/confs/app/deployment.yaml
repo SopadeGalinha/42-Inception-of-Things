@@ -1,21 +1,3 @@
-#===============================================================================
-# color-app Application Deployment
-#===============================================================================
-# This file defines all Kubernetes resources for our own app (built by
-# Heitor, our project partner — source: github.com/HeitorMP/hmaciel-):
-# - Deployment: Runs the container with specified replicas
-# - Service: Exposes the app internally within the cluster
-#
-# GitOps Flow:
-# 1. This file is stored in GitHub
-# 2. Argo CD watches for changes
-# 3. When you change the image tag (1.0.0 → 2.0.0), Argo CD deploys the update
-#
-# To demonstrate CI/CD:
-# 1. Start with image: hmacielp/color-app:1.0.0
-# 2. Commit and push with image: hmacielp/color-app:2.0.0
-# 3. Watch Argo CD automatically update the deployment
-#===============================================================================
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,15 +7,10 @@ metadata:
   labels:
     app: color-app
 spec:
-  # Number of pod replicas to run
   replicas: 1
-
-  # Selector must match the pod template labels
   selector:
     matchLabels:
       app: color-app
-
-  # Pod template
   template:
     metadata:
       labels:
@@ -41,22 +18,10 @@ spec:
     spec:
       containers:
         - name: color-app
-          #-----------------------------------------------------------------
-          # IMAGE VERSION
-          #-----------------------------------------------------------------
-          # Change this to demonstrate GitOps CI/CD:
-          # 1.0.0 → 2.0.0: Edit, commit, push, watch Argo CD update!
-          #
-          # The hmacielp/color-app image is a tiny FastAPI app that renders
-          # a full-page background color, differing between versions.
-          #-----------------------------------------------------------------
-          image: hmacielp/color-app:1.0.0
-
-          # Container port (the app listens on 8080)
+          image: hmacielp/color-app:2.0.0
           ports:
             - containerPort: 8080
 
-          # Resource limits (good practice)
           resources:
             limits:
               memory: "128Mi"
@@ -73,11 +38,8 @@ metadata:
   labels:
     app: color-app
 spec:
-  # ClusterIP for internal access
-  # The Ingress (or port-forward) will expose it externally
   type: ClusterIP
 
-  # Select pods with matching labels
   selector:
     app: color-app
 

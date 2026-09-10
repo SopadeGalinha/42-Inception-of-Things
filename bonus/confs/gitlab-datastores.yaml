@@ -1,12 +1,3 @@
-#===============================================================================
-# Minimal standalone PostgreSQL + Redis for the local GitLab instance.
-#===============================================================================
-# The gitlab/gitlab Helm chart (10.x, appVersion v19.x) no longer bundles
-# PostgreSQL/Redis subcharts — it requires external instances. For a local,
-# single-node, non-HA bonus setup, plain single-Pod Deployments (backed by
-# k3d's default local-path PVCs) are enough; no need for a separate
-# Bitnami/production-grade chart just to satisfy this requirement.
-#===============================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -41,9 +32,6 @@ spec:
       containers:
         - name: postgres
           image: postgres:17
-          # GitLab's schema load runs as a single transaction that acquires
-          # far more locks than Postgres's 64-lock default allows ("out of
-          # shared memory... increase max_locks_per_transaction").
           args:
             - "-c"
             - "max_locks_per_transaction=256"
@@ -140,11 +128,6 @@ spec:
     - port: 6379
       targetPort: 6379
 ---
-# GitLab's chart (10.x) requires a real S3-compatible connection configured
-# for artifacts/lfs/uploads/packages — there is no "just use local disk"
-# escape hatch anymore, even with global.appConfig.object_store.enabled:
-# false individually per type. A single MinIO pod is the smallest thing that
-# satisfies this.
 apiVersion: v1
 kind: Secret
 metadata:

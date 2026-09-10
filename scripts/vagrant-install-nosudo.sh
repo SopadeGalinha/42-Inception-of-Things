@@ -1,25 +1,4 @@
 #!/bin/bash
-#===============================================================================
-# No-sudo Vagrant installer
-#===============================================================================
-# For a machine with NO sudo access (e.g. the school lab account), where the
-# normal "sudo apt install vagrant" from scripts/bootstrap.sh isn't an option.
-#
-# Extracts the official Vagrant .deb into $HOME/.local — no dpkg, no root —
-# using only `ar` and `tar`, both plain user-space tools. VirtualBox itself
-# still needs to be pre-installed (it ships setuid-root helpers that
-# genuinely require a real system install); this script only covers Vagrant.
-#
-# Also wires up PATH/LD_LIBRARY_PATH in ~/.zshrc and ~/.bashrc (whichever
-# exist), idempotently, so a bare `vagrant` command works directly in any new
-# shell after this — no wrapper needed. Run once during evaluation setup,
-# open a new shell (or `source` your rc file), then use `vagrant` normally
-# exactly as the subject describes.
-#
-# If you'd rather not touch your dotfiles, scripts/vagrant-wrapper.sh remains
-# a drop-in replacement for a bare `vagrant` command, e.g.:
-#   ../scripts/vagrant-wrapper.sh up
-#===============================================================================
 
 set -e
 
@@ -38,15 +17,7 @@ RC_MARKER_END="# ---------------------------------------------------------------
 
 setup_shell_rc() {
     local block
-    # A function, not exported PATH/LD_LIBRARY_PATH: the bundled libcurl.so.4
-    # under vagrant-portable-libs is ABI-incompatible with the system curl
-    # binary, so exporting LD_LIBRARY_PATH for the whole shell breaks every
-    # other command that also happens to load libcurl (system `curl`
-    # itself, notably). Scoping it to only this one command's environment
-    # avoids that collateral damage while still letting a bare `vagrant`
-    # work everywhere.
     block="$RC_MARKER_START
-# Portable Vagrant (no-sudo install, see iot/scripts/vagrant-install-nosudo.sh)
 vagrant() {
     LD_LIBRARY_PATH=\"$LIBS_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\" \\
     \"$INSTALL_ROOT/opt/vagrant/bin/vagrant\" \"\$@\"

@@ -1,13 +1,4 @@
 #!/bin/bash
-#===============================================================================
-# Part 3: Dependency installer
-#===============================================================================
-# Installs everything K3d + Argo CD need on a fresh machine:
-# - Docker
-# - kubectl
-# - k3d
-# Safe to re-run: each step is skipped if the tool is already installed.
-#===============================================================================
 
 set -e
 

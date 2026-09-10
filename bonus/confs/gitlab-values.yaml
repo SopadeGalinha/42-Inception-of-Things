@@ -1,15 +1,3 @@
-#===============================================================================
-# Minimal local GitLab values
-#===============================================================================
-# The official gitlab/gitlab chart (10.x, appVersion v19.x) no longer bundles
-# PostgreSQL/Redis subcharts — see bonus/confs/gitlab-datastores.yaml for the
-# plain standalone Postgres/Redis this points at. Everything below trims the
-# chart down to what a single-node local/demo instance actually needs:
-# object storage stays on local disk (the chart's own default when
-# object_store.enabled is false), the container registry / Prometheus /
-# GitLab Runner / Zoekt / OpenBao / cert-manager are all switched off, and
-# every workload is pinned to 1 replica.
-#===============================================================================
 
 global:
   edition: ce
@@ -117,11 +105,6 @@ gitlab:
         cpu: 100m
         memory: 200Mi
   toolbox:
-    # Default backend is "s3", which unconditionally runs
-    # `cp /etc/gitlab/.s3cfg ...` on startup even with no backups ever
-    # configured/run — with no backup objectStorage secret set, that file
-    # never exists and toolbox crash-loops. We don't run backups in this
-    # local demo, so "azure" (a no-op sleep loop, no file copy) sidesteps it.
     backups:
       objectStorage:
         backend: azure

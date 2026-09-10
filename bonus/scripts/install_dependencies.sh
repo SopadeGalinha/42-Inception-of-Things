@@ -1,10 +1,4 @@
 #!/bin/bash
-#===============================================================================
-# Bonus: dependency installer
-#===============================================================================
-# Same as p3/scripts/install_dependencies.sh (Docker, kubectl, k3d) plus
-# Helm, needed here to install the GitLab chart. Safe to re-run.
-#===============================================================================
 
 set -e
 
