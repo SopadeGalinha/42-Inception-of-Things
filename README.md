@@ -2,7 +2,7 @@
 
 K3s + K3d + Vagrant. One Vagrant VM (or k3d cluster) per part.
 
-## Setup (no host sudo required)
+## Setup (no sudo)
 
 ```bash
 ./scripts/bootstrap.sh
@@ -54,11 +54,11 @@ vagrant destroy -f
 
 ```bash
 cd p3
-vagrant up      # boots and preps the VM only, nothing installed yet
+vagrant up      # boots and preps the VM only
 
-vagrant ssh     # or VirtualBox console: user jhogonca / password qwerty123
+vagrant ssh
 
-iot-setup       # installs Docker/kubectl/k3d, deploys Argo CD + the app
+iot-setup
 ```
 
 Aliases available inside the VM (from `vagrant up`, even before running `iot-setup`):
@@ -76,8 +76,7 @@ From the host, no need to stay inside the VM:
 | Argo CD | `https://192.168.56.120:8443` (`admin` / `argocd-password`) |
 | App     | `http://192.168.56.120:8081`     |
 
-The app is deployed from a teammate's repo (`heitorMP/hmaciel-`), not from
-`p3/` in this repo. To demo a version change, push to that repo, then:
+The app is deployed from `heitorMP/hmaciel-`. To demo a version change, push to the repo, then:
 
 ```bash
 kubectl get applications -n argocd -w
