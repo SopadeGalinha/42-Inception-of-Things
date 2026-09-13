@@ -12,6 +12,18 @@ GITLAB_RELEASE="gitlab"
 GITLAB_ROOT_PAT="bonus-seed-token"
 GITLAB_PROJECT_PATH="root/playground"
 
+# Service deployed into $DEV_NAMESPACE by the Argo CD Application, whichever
+# GIT_SOURCE is used (the "gitlab" source seeds the repo from this same
+# bonus/confs/app directory, so the Service name/port match either way).
+APP_SERVICE="color-app-service"
+APP_SERVICE_PORT="8080"
+
+# Host-reachable ports for the persistent port-forwards (see
+# setup_portforwards below). The VM has a dedicated IP on the host-only
+# network (192.168.56.130), so these are reachable straight from the host.
+ARGOCD_FORWARD_PORT="8443"
+APP_FORWARD_PORT="8081"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -57,6 +69,25 @@ setup_kubectl_alias() {
     grep -qxF 'complete -o default -F __start_kubectl k' "$HOME/.bashrc" || echo 'complete -o default -F __start_kubectl k' >> "$HOME/.bashrc"
 }
 
+# Whichever user actually ran this script (vagrant via SSH, or jhogonca via
+# the VirtualBox console) ends up with the working kubeconfig in $HOME; copy
+# it to the other login too, and always to /home/vagrant since the
+# port-forward systemd services (User=vagrant) rely on finding it there.
+sync_kubeconfig_for_other_users() {
+    local src="$HOME/.kube/config"
+
+    for u in vagrant jhogonca; do
+        [ "$u" = "$(id -un)" ] && continue
+        id "$u" &>/dev/null || continue
+
+        local home
+        home=$(getent passwd "$u" | cut -d: -f6)
+        sudo install -d -m 700 -o "$u" -g "$u" "$home/.kube"
+        sudo cp "$src" "$home/.kube/config"
+        sudo chown "$u:$u" "$home/.kube/config"
+    done
+}
+
 create_cluster() {
     log_info "Creating K3d cluster: $CLUSTER_NAME"
 
@@ -75,6 +106,9 @@ create_cluster() {
         --timeout 120s
 
     kubectl cluster-info
+
+    sync_kubeconfig_for_other_users
+
     log_success "K3d cluster '$CLUSTER_NAME' created successfully!"
 }
 
@@ -164,7 +198,6 @@ install_argocd() {
 
 configure_argocd_access() {
     log_info "Configuring Argo CD access..."
-    kubectl patch svc argocd-server -n "$ARGOCD_NAMESPACE" -p '{"spec": {"type": "NodePort"}}'
     kubectl rollout status deployment/argocd-server -n "$ARGOCD_NAMESPACE" --timeout=120s
 
     local password
@@ -176,6 +209,52 @@ configure_argocd_access() {
     echo "Username: admin"
     echo "Password: $password"
     echo ""
+}
+
+# Persistent kubectl port-forward, exposed on every interface (so it's
+# reachable from the host over the private network) and kept alive by
+# systemd: Restart=always + StartLimitIntervalSec=0 means it reconnects on
+# its own (a few seconds' hiccup, never a manual re-run) whenever Argo CD
+# syncs/recreates the target pod, and it survives `vagrant halt`/`vagrant up`
+# since the unit is enabled.
+setup_portforward_service() {
+    local unit_name=$1 svc=$2 ns=$3 port_map=$4 description=$5
+    local unit_path="/etc/systemd/system/${unit_name}.service"
+
+    log_info "Configuring persistent port-forward: $description"
+
+    sudo tee "$unit_path" > /dev/null <<EOF
+[Unit]
+Description=$description
+After=network.target docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=vagrant
+Environment=KUBECONFIG=/home/vagrant/.kube/config
+ExecStart=/usr/local/bin/kubectl port-forward --address 0.0.0.0 svc/${svc} -n ${ns} ${port_map}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now "${unit_name}.service"
+}
+
+setup_portforwards() {
+    setup_portforward_service \
+        "argocd-portforward" "argocd-server" "$ARGOCD_NAMESPACE" \
+        "${ARGOCD_FORWARD_PORT}:443" "Argo CD UI port-forward"
+
+    setup_portforward_service \
+        "app-portforward" "$APP_SERVICE" "$DEV_NAMESPACE" \
+        "${APP_FORWARD_PORT}:${APP_SERVICE_PORT}" "Dev app port-forward"
+
+    log_success "Port-forwards are running as systemd services (persist across syncs and reboots)."
 }
 
 deploy_application() {
@@ -194,14 +273,51 @@ deploy_application() {
         sed "s#GITLAB_REPO_URL_PLACEHOLDER#http://gitlab-webservice-default.${GITLAB_NAMESPACE}.svc.cluster.local:8181/${GITLAB_PROJECT_PATH}.git#" \
             "/vagrant/confs/argocd-app-gitlab.yaml" | kubectl apply -f -
     else
-        log_info "GIT_SOURCE=github: applying bonus/confs/argocd-app-github.yaml (same public repo/path already used for the mandatory p3)."
+        log_info "GIT_SOURCE=github: applying bonus/confs/argocd-app-github.yaml (points at this repo's own bonus/confs/app)."
         kubectl apply -f "/vagrant/confs/argocd-app-github.yaml"
     fi
 
     log_success "Argo CD Application created!"
-    log_info "Waiting for application to sync..."
-    sleep 15
+    wait_for_sync "color-app"
     kubectl get applications -n "$ARGOCD_NAMESPACE"
+}
+
+# A transient repo-server hiccup (e.g. redis/repo-server still starting up)
+# can leave the Application controller stuck reporting sync status
+# "Unknown" instead of retrying on its own. Poll instead of a blind sleep,
+# and nudge it once with a hard refresh if it's still stuck partway through
+# the timeout.
+wait_for_sync() {
+    local app_name=$1
+    local timeout=${2:-180}
+    local elapsed=0
+    local refreshed=false
+    local sync_status=""
+
+    log_info "Waiting for '$app_name' to sync (timeout: ${timeout}s)..."
+
+    while (( elapsed < timeout )); do
+        sync_status=$(kubectl get application "$app_name" -n "$ARGOCD_NAMESPACE" \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null)
+
+        if [[ "$sync_status" == "Synced" ]]; then
+            log_success "'$app_name' synced!"
+            return
+        fi
+
+        if [[ "$sync_status" == "Unknown" && "$refreshed" == false && $elapsed -ge 30 ]]; then
+            log_warning "Sync status stuck at 'Unknown' — forcing a hard refresh..."
+            kubectl annotate application "$app_name" -n "$ARGOCD_NAMESPACE" \
+                argocd.argoproj.io/refresh=hard --overwrite &>/dev/null
+            refreshed=true
+        fi
+
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    log_warning "'$app_name' did not report Synced within ${timeout}s (current: ${sync_status:-unknown})."
+    log_warning "Check manually: kubectl get application $app_name -n $ARGOCD_NAMESPACE"
 }
 
 show_status() {
@@ -242,10 +358,24 @@ main() {
     install_argocd
     configure_argocd_access
     deploy_application
+    setup_portforwards
     show_status
 
     echo ""
     log_success "Setup complete!"
+    echo ""
+    echo "Everything is already running and reachable from the HOST (no need"
+    echo "to stay inside the VM):"
+    echo "  Argo CD UI : https://192.168.56.130:${ARGOCD_FORWARD_PORT}  (admin / password shown above, or run: argocd-password)"
+    echo "  Dev app    : http://192.168.56.130:${APP_FORWARD_PORT}"
+    if [ "$GIT_SOURCE" = "gitlab" ]; then
+        echo "  GitLab     : http://gitlab.${GITLAB_DOMAIN}:8090 (root / see GitLab pod logs or the UI's first-login flow for the password)"
+    fi
+    echo ""
+    echo "argocd-portforward and app-portforward are systemd services: they"
+    echo "auto-restart on sync/pod changes and survive 'vagrant halt' +"
+    echo "'vagrant up'. Check with: systemctl status argocd-portforward app-portforward"
+    echo ""
 }
 
 main "$@"

@@ -6,5 +6,35 @@ Vagrant.configure("2") do |config|
     vb.memory = "10240"
     vb.cpus = 4
   end
-  config.vm.provision "shell", path: "scripts/setup.sh", privileged: false
+  # `vagrant up` only boots and preps the VM for login — it does NOT install
+  # Docker/k3d/Argo CD/GitLab (that install script is meant to be run live,
+  # not hidden inside `vagrant up`). Log in (`vagrant ssh`, or the
+  # VirtualBox GUI with jhogonca/qwerty123) and run `bonus-setup`.
+  config.vm.provision "shell", privileged: true, inline: <<-SHELL
+    id jhogonca &>/dev/null || useradd -m -s /bin/bash jhogonca
+    echo "jhogonca:qwerty123" | chpasswd
+    usermod -aG sudo jhogonca
+    echo "jhogonca ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/jhogonca
+    chmod 440 /etc/sudoers.d/jhogonca
+
+    for home in /home/vagrant /home/jhogonca; do
+      grep -qxF 'alias bonus-setup="bash /vagrant/scripts/setup.sh"' "$home/.bashrc" || \
+        echo 'alias bonus-setup="bash /vagrant/scripts/setup.sh"' >> "$home/.bashrc"
+      grep -qxF 'alias argocd-password=' "$home/.bashrc" || \
+        echo 'alias argocd-password='"'"'kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo'"'"'' >> "$home/.bashrc"
+      grep -qxF 'alias k=kubectl' "$home/.bashrc" || echo 'alias k=kubectl' >> "$home/.bashrc"
+      grep -qxF 'source <(kubectl completion bash)' "$home/.bashrc" || echo 'source <(kubectl completion bash)' >> "$home/.bashrc"
+      grep -qxF 'complete -o default -F __start_kubectl k' "$home/.bashrc" || echo 'complete -o default -F __start_kubectl k' >> "$home/.bashrc"
+    done
+
+    {
+      echo ""
+      echo "Bonus (local GitLab + Part 3 lab) is NOT installed yet."
+      echo "Run:            bonus-setup"
+      echo "(or:            bash /vagrant/scripts/setup.sh)"
+      echo "GitHub instead of local GitLab: GIT_SOURCE=github bonus-setup"
+      echo "Argo CD admin password, any time after setup: argocd-password"
+      echo ""
+    } > /etc/motd
+  SHELL
 end

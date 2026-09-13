@@ -7,7 +7,7 @@ LIBS_DIR="$HOME/.local/vagrant-portable-libs"
 
 if [ ! -x "$VAGRANT_ROOT/bin/vagrant" ]; then
     echo "Portable Vagrant not found at $VAGRANT_ROOT" >&2
-    echo "Run scripts/vagrant-install-nosudo.sh first." >&2
+    echo "Run scripts/bootstrap.sh first." >&2
     exit 1
 fi
 

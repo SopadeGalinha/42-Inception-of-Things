@@ -1,12 +1,18 @@
 # Inception-of-Things (IoT)
 
-K3s + K3d + Vagrant. Comandos para testar cada parte.
+K3s + K3d + Vagrant. One Vagrant VM (or k3d cluster) per part.
 
-## Sem sudo (só a primeira vez)
+## Setup (no host sudo required)
 
 ```bash
-./scripts/vagrant-install-nosudo.sh
-# abrir novo terminal (ou source ~/.zshrc)
+./scripts/bootstrap.sh
+# open a new terminal (or: source ~/.bashrc)
+```
+
+If `vagrant` still isn't found afterwards, call the binary directly:
+
+```bash
+./scripts/vagrant.sh up
 ```
 
 ---
@@ -48,35 +54,32 @@ vagrant destroy -f
 
 ```bash
 cd p3
-vagrant up
+vagrant up      # boots and preps the VM only, nothing installed yet
+
+vagrant ssh     # or VirtualBox console: user jhogonca / password qwerty123
+
+iot-setup       # installs Docker/kubectl/k3d, deploys Argo CD + the app
 ```
 
-**Abrir o Argo CD:**
+Aliases available inside the VM (from `vagrant up`, even before running `iot-setup`):
+
+| Alias              | Does                                        |
+|--------------------|----------------------------------------------|
+| `iot-setup`        | Run the full setup                          |
+| `argocd-password`  | Print the Argo CD admin password            |
+| `k`                | Alias for `kubectl`, with completion        |
+
+From the host, no need to stay inside the VM:
+
+| Service | URL                              |
+|---------|-----------------------------------|
+| Argo CD | `https://192.168.56.120:8443` (`admin` / `argocd-password`) |
+| App     | `http://192.168.56.120:8081`     |
+
+The app is deployed from a teammate's repo (`heitorMP/hmaciel-`), not from
+`p3/` in this repo. To demo a version change, push to that repo, then:
 
 ```bash
-vagrant ssh -c "kubectl port-forward --address 0.0.0.0 svc/argocd-server -n argocd 8443:443"
-vagrant ssh -c "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath={.data.password} | base64 -d"
-```
-
-→ `https://192.168.56.120:8443` — user `admin`, password do comando acima.
-
-**Abrir a app:**
-
-```bash
-kubectl get svc -n dev   # confirma o nome do service (depende do repo atual do Argo CD)
-vagrant ssh -c "kubectl port-forward --address 0.0.0.0 svc/<nome> -n dev 8081:8080"
-```
-
-→ `http://192.168.56.120:8081`
-
-**Demo CI/CD (mudar versão):**
-
-```bash
-# edita p3/confs/app/deployment.yaml (tag da imagem)
-git add p3/confs/app/deployment.yaml
-git commit -m "feat(p3): update app version"
-git push
-
 kubectl get applications -n argocd -w
 ```
 
@@ -90,16 +93,29 @@ vagrant destroy -f
 
 ```bash
 cd bonus
-vagrant up          # GIT_SOURCE=gitlab por default
+vagrant up      # boots and preps the VM only, nothing installed yet
+
+vagrant ssh     # or VirtualBox console: user jhogonca / password qwerty123
+
+bonus-setup                     # local GitLab (default)
+GIT_SOURCE=github bonus-setup   # skip GitLab, use GitHub instead
 ```
 
-Testar com GitHub em vez do GitLab local:
+Aliases available inside the VM (from `vagrant up`, even before running `bonus-setup`):
 
-```bash
-vagrant ssh -c "GIT_SOURCE=github bash /vagrant/scripts/setup.sh"
-```
+| Alias              | Does                                        |
+|--------------------|----------------------------------------------|
+| `bonus-setup`      | Run the full setup                          |
+| `argocd-password`  | Print the Argo CD admin password            |
+| `k`                | Alias for `kubectl`, with completion        |
 
-**Argo CD e app:** mesmos passos do p3, mas VM em `192.168.56.130`.
+From the host, no need to stay inside the VM:
+
+| Service | URL                              |
+|---------|-----------------------------------|
+| Argo CD | `https://192.168.56.130:8443` (`admin` / `argocd-password`) |
+| App     | `http://192.168.56.130:8081`     |
+| GitLab  | `http://gitlab.192.168.56.130.nip.io:8090` (`GIT_SOURCE=gitlab` only) |
 
 ```bash
 vagrant destroy -f

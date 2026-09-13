@@ -2,65 +2,87 @@
 
 set -e
 
-SUDO=""
-[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+VAGRANT_VERSION="2.4.9"
+ARCH="amd64"
+DEB_URL="https://releases.hashicorp.com/vagrant/${VAGRANT_VERSION}/vagrant_${VAGRANT_VERSION}-1_${ARCH}.deb"
 
-log()  { echo -e "\033[0;34m[BOOTSTRAP]\033[0m $1"; }
-warn() { echo -e "\033[1;33m[WARNING]\033[0m $1"; }
+INSTALL_ROOT="$HOME/.local/vagrant-portable"
+LIBS_DIR="$HOME/.local/vagrant-portable-libs"
+WORK_DIR="$(mktemp -d)"
 
-check_nested_virtualization() {
-    log "Checking for hardware virtualization support (VT-x/AMD-V)..."
-    if grep -Eq '(vmx|svm)' /proc/cpuinfo; then
-        log "CPU virtualization extensions are visible to this VM."
-    else
-        warn "No vmx/svm flag found in /proc/cpuinfo."
-        warn "VirtualBox (used by p1 and p2) needs nested virtualization enabled"
-        warn "on whatever hypervisor is running THIS VM (e.g. 'Virtualize"
-        warn "Intel VT-x/EPT' in VMware, the Nested VT-x/AMD-V option under"
-        warn "VirtualBox's own Processor tab, or"
-        warn "'Set-VMProcessor -ExposeVirtualizationExtensions \$true' on Hyper-V)."
-        warn "p1 and p2 will fail to boot their VMs until this is fixed."
+log() { echo -e "\033[0;34m[BOOTSTRAP]\033[0m $1"; }
+
+RC_MARKER_START="# --- IoT project tooling (Inception-of-Things, sem sudo neste poste) ---"
+RC_MARKER_END="# ------------------------------------------------------------------------"
+
+setup_shell_rc() {
+    local block
+    block="$RC_MARKER_START
+vagrant() {
+    LD_LIBRARY_PATH=\"$LIBS_DIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\" \\
+    \"$INSTALL_ROOT/opt/vagrant/bin/vagrant\" \"\$@\"
+}
+$RC_MARKER_END"
+
+    # .bashrc is the near-universal safe default — create it if this is a
+    # bare-bones account that doesn't have one yet, so the function always
+    # ends up wired up SOMEWHERE. .zshrc/.profile are only touched if they
+    # already exist, so we don't create config for a shell this account
+    # doesn't actually use.
+    touch "$HOME/.bashrc"
+
+    local rc updated=0
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+        [ -f "$rc" ] || continue
+        if grep -qF "$RC_MARKER_START" "$rc" 2>/dev/null; then
+            log "PATH already wired up in $rc, leaving as-is."
+        else
+            log "Adding portable Vagrant to PATH in $rc"
+            printf '\n%s\n' "$block" >> "$rc"
+            updated=1
+        fi
+    done
+    if [ "$updated" -eq 1 ]; then
+        log "Open a new shell (or 'source' your rc file) to pick this up."
     fi
+
+    log "If 'vagrant' still isn't found after that (unusual shell/login setup,"
+    log "rc file not sourced, etc.), use scripts/vagrant.sh instead —"
+    log "it calls the same binary directly, no shell config needed."
 }
 
-install_base_packages() {
-    if command -v git &> /dev/null && command -v curl &> /dev/null; then
-        log "git/curl already installed, skipping."
-        return
-    fi
-    log "Installing git/curl..."
-    ${SUDO} apt-get update -qq
-    ${SUDO} apt-get install -y git curl
-}
+if [ -x "$INSTALL_ROOT/opt/vagrant/bin/vagrant" ]; then
+    log "Already installed at $INSTALL_ROOT — nothing to do."
+    setup_shell_rc
+    exit 0
+fi
 
-install_virtualbox() {
-    if command -v vboxmanage &> /dev/null; then
-        log "VirtualBox already installed, skipping."
-        return
-    fi
-    log "Installing VirtualBox..."
-    ${SUDO} apt-get update -qq
-    ${SUDO} apt-get install -y virtualbox
-}
+for tool in ar tar curl; do
+    command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
+done
 
-install_vagrant() {
-    if command -v vagrant &> /dev/null; then
-        log "Vagrant already installed, skipping."
-        return
-    fi
-    log "Installing Vagrant..."
-    ${SUDO} apt-get install -y wget gnupg software-properties-common
-    wget -qO- https://apt.releases.hashicorp.com/gpg | ${SUDO} gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-        | ${SUDO} tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
-    ${SUDO} apt-get update -qq
-    ${SUDO} apt-get install -y vagrant
-}
+log "Downloading Vagrant ${VAGRANT_VERSION} .deb..."
+curl -fsSL -o "$WORK_DIR/vagrant.deb" "$DEB_URL"
 
-check_nested_virtualization
-install_base_packages
-install_virtualbox
-install_vagrant
+log "Extracting .deb payload (ar + tar, no dpkg/root needed)..."
+(
+    cd "$WORK_DIR"
+    ar x vagrant.deb
+    mkdir -p "$INSTALL_ROOT"
+    tar -xf data.tar.* -C "$INSTALL_ROOT"
+)
 
-log "Base tools ready: git, VirtualBox, Vagrant."
-log "Next: cd p1 && vagrant up"
+log "Building a narrow LD_LIBRARY_PATH dir (excludes bundled libreadline/libhistory, which break /bin/bash)..."
+mkdir -p "$LIBS_DIR"
+find "$INSTALL_ROOT/opt/vagrant/embedded/lib" -maxdepth 1 -name '*.so*' | while read -r lib; do
+    base="$(basename "$lib")"
+    case "$base" in
+        libreadline*|libhistory*) continue ;;
+    esac
+    ln -sf "$lib" "$LIBS_DIR/$base"
+done
+
+rm -rf "$WORK_DIR"
+
+log "Installed to $INSTALL_ROOT."
+setup_shell_rc

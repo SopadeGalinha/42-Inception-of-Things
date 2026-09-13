@@ -10,13 +10,28 @@ log() {
 }
 
 install_docker() {
-    if command -v docker &> /dev/null; then
-        log "Docker already installed, skipping."
-        return
+    # A prior run interrupted mid-install (SSH drop, VM halt/reload, host
+    # suspend, etc.) can leave the docker-ce packages "unpacked" but never
+    # configured: the docker CLI binary is already present (so a plain
+    # `command -v docker` check looks satisfied) but the `docker` group and
+    # the systemd units were never created, so the daemon can't start.
+    # `dpkg --configure -a` is a no-op when nothing is pending, so it's safe
+    # to always run before deciding whether a (re)install is needed.
+    ${SUDO} dpkg --configure -a 2>/dev/null || true
+
+    if command -v docker &> /dev/null && getent group docker &> /dev/null; then
+        log "Docker already installed, skipping install step."
+    else
+        log "Installing Docker..."
+        curl -fsSL https://get.docker.com | ${SUDO} sh
     fi
-    log "Installing Docker..."
-    curl -fsSL https://get.docker.com | ${SUDO} sh
-    ${SUDO} usermod -aG docker "${SUDO_USER:-$USER}" 2>/dev/null || true
+
+    # Idempotent regardless of whether install just ran: keep both possible
+    # login users (vagrant ssh vs. VirtualBox console as jhogonca) in the
+    # docker group and the daemon enabled/running.
+    for u in vagrant jhogonca; do
+        id "$u" &>/dev/null && ${SUDO} usermod -aG docker "$u"
+    done
     ${SUDO} systemctl enable --now docker
 }
 
